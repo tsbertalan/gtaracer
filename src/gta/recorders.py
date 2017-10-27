@@ -14,7 +14,9 @@ def work(Task, workSignal, resultQueue, period, waitPeriod=1, **taskKwargs):
     task = Task(**taskKwargs)
     while True:
         if workSignal.is_set():
-            resultQueue.put(task())
+            result = task()
+            now = time.time()
+            resultQueue.put((now, result))
             time.sleep(period)
         else:
             time.sleep(waitPeriod)
@@ -48,9 +50,10 @@ class BaseRecorder(object):
         passed = {'waitPeriod': waitPeriod}
         passed.update(taskKwargs)
         
+        self.workerArgs = (Task, self.workSignal, self.resultQueue, period)
         self.worker = Process(
             target=work, 
-            args=(Task, self.workSignal, self.resultQueue, period),
+            args=self.workerArgs,
             kwargs=passed,
         )
         self.worker.daemon = True
@@ -70,7 +73,11 @@ class BaseRecorder(object):
 
     @property
     def results(self):
-        return np.stack(self.resultsList)
+        return np.stack([r for (t, r) in self.resultsList])
+
+    @property
+    def times(self):
+        return [t for (t, r) in self.resultsList]
 
 
 class DemoTask(BaseTask):

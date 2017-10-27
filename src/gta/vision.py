@@ -66,10 +66,8 @@ class GtaWindow(Window):
 
 class VisionTask(BaseTask):
 
-    def __init__(self, window=None):
-        if window is None:
-            window = GtaWindow()
-        self.window = window
+    def __init__(self):
+        self.window = GtaWindow()
 
     def __call__(self):
         img = np.array(self.window.grab())
@@ -79,7 +77,7 @@ class VisionTask(BaseTask):
 
 class VisionRecorder(BaseRecorder):
 
-    def __init__(self, period=2):
+    def __init__(self, period=.01):
         self.gtaWindow = GtaWindow()
         super(self.__class__, self).__init__(period, Task=VisionTask)
 
