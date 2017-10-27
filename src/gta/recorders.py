@@ -33,6 +33,7 @@ class BaseRecorder(object):
         Task : BaseTask
             The task to be instantiated by the worker and run repeatedly.
             Must implement __call__ method with no arguments.
+            If None, no worker is created.
         waitPeriod : float
             Minimum time in seconds between stopping work and resuming.
             (Allows for longer sleep time between checks for whether to begin work.)
@@ -46,18 +47,18 @@ class BaseRecorder(object):
         self.workSignal = self.manager.Event()
         self.resultQueue = self.manager.Queue()
         self._resultsList = []
-
-        passed = {'waitPeriod': waitPeriod}
-        passed.update(taskKwargs)
         
-        self.workerArgs = (Task, self.workSignal, self.resultQueue, period)
-        self.worker = Process(
-            target=work, 
-            args=self.workerArgs,
-            kwargs=passed,
-        )
-        self.worker.daemon = True
-        self.worker.start()
+        if Task is not None:
+            passed = {'waitPeriod': waitPeriod}
+            passed.update(taskKwargs)
+            self.workerArgs = (Task, self.workSignal, self.resultQueue, period)
+            self.worker = Process(
+                target=work, 
+                args=self.workerArgs,
+                kwargs=passed,
+            )
+            self.worker.daemon = True
+            self.worker.start()
 
     def start(self):
         self.workSignal.set()
