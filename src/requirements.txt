@@ -1,0 +1,4 @@
+keyboard
+tqdm
+numpy
+win32gui
