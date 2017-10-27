@@ -1,15 +1,15 @@
 import keyboard
 
-from gta.recorders import BaseRecorder, BaseTask
+from gta.recorders import BaseRecorder
 
 class KeyboardRecorder(BaseRecorder):
 
-    def __init__(self, period=2):
+    def __init__(self):
         super(self.__class__, self).__init__(period=None, Task=None)
         self.scanCodes = {}
 
     def eventCallback(self, event):
-        self.resultQueue.put(event)
+        self.resultsQueue.put(event)
 
     def start(self):
         keyboard.hook(self.eventCallback)
@@ -19,8 +19,8 @@ class KeyboardRecorder(BaseRecorder):
 
     @property
     def resultsList(self):
-        while not self.resultQueue.empty():
-            event = self.resultQueue.get()
+        while not self.resultsQueue.empty():
+            event = self.resultsQueue.get()
             time = event.time
             scanCode = event.scan_code
             if scanCode not in self.scanCodes:

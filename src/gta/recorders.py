@@ -10,13 +10,14 @@ class BaseTask(object):
         raise NotImplementedError
 
 
-def work(Task, workSignal, resultQueue, period, waitPeriod=1, **taskKwargs):
+def work(Task, workSignal, resultsQueueWorker, period, waitPeriod=1, **taskKwargs):
     task = Task(**taskKwargs)
     while True:
         if workSignal.is_set():
             result = task()
-            now = time.time()
-            resultQueue.put((now, result))
+            if result is not None:
+                now = time.time()
+                resultsQueueWorker.put((now, result))
             time.sleep(period)
         else:
             time.sleep(waitPeriod)
@@ -24,7 +25,11 @@ def work(Task, workSignal, resultQueue, period, waitPeriod=1, **taskKwargs):
 
 class BaseRecorder(object):
 
-    def __init__(self, period, Task=BaseTask, waitPeriod=1, **taskKwargs):
+    def __init__(self, 
+        period, 
+        Task=BaseTask, waitPeriod=1, giveQueueDirectly=False, 
+        **taskKwargs
+        ):
         """
         Parameters
         ----------
@@ -37,6 +42,8 @@ class BaseRecorder(object):
         waitPeriod : float
             Minimum time in seconds between stopping work and resuming.
             (Allows for longer sleep time between checks for whether to begin work.)
+        giveQueueDirectly : bool
+            Whether the resultsQueue should be passed to the Task constructor directly.
         **taskKwargs
             Passed on to constructor of Task.
         """
@@ -45,13 +52,15 @@ class BaseRecorder(object):
         self.taskKwargs = taskKwargs
         self.manager = Manager()
         self.workSignal = self.manager.Event()
-        self.resultQueue = self.manager.Queue()
+        self.resultsQueue = self.manager.Queue()
         self._resultsList = []
         
         if Task is not None:
             passed = {'waitPeriod': waitPeriod}
             passed.update(taskKwargs)
-            self.workerArgs = (Task, self.workSignal, self.resultQueue, period)
+            if giveQueueDirectly:
+                passed['resultsQueue'] = self.resultsQueue
+            self.workerArgs = (Task, self.workSignal, self.resultsQueue, period)
             self.worker = Process(
                 target=work, 
                 args=self.workerArgs,
@@ -68,8 +77,8 @@ class BaseRecorder(object):
 
     @property
     def resultsList(self):
-        while not self.resultQueue.empty():
-            self._resultsList.append(self.resultQueue.get())
+        while not self.resultsQueue.empty():
+            self._resultsList.append(self.resultsQueue.get())
         return self._resultsList
 
     @property
