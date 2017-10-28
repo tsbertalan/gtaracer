@@ -87,7 +87,7 @@ class BaseRecorder(object):
 
     @property
     def times(self):
-        return [t for (t, r) in self.resultsList]
+        return np.array([t for (t, r) in self.resultsList])
 
 
 class DemoTask(BaseTask):

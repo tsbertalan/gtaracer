@@ -4,45 +4,7 @@ import time
 import xinput
 
 from gta.recorders import BaseRecorder, BaseTask
-
-# x360ce.ini assigns int or str keys to each button press.
-eventNames = {
-    1: 'd_up', 2: 'd_down', 3: 'd_left', 4: 'd_right',
-    5: 'start', 6: 'back',
-    7: 'l_stick', 8: 'r_stick',
-    9: 'l_bumper', 10: 'r_bumper',
-    13: 'a', 14: 'b',
-    15: 'x', 16: 'y',
-}
-buttonNames = list(eventNames.keys())
-eventKeys = []
-eventKeys.extend(buttonNames)
-axisNames = [
-    'l_thumb_x',
-    'l_thumb_y',
-    'r_thumb_x',
-    'r_thumb_y',
-    'left_trigger',
-    'right_trigger',
-]
-eventKeys.extend(axisNames)
-eventKeys = tuple(eventKeys)
-for k in eventKeys:
-    if isinstance(k, str):
-        eventNames[k] = k
-
-# Assign arbitrary eventIDs for featurizing later.
-eventIDs = {
-    k: i for (i, k) in enumerate(eventKeys)
-}
-
-def eid2key(eid):
-    for eventKey, otherId in eventIDs.items():
-        if otherId == eid:
-            return eventKey
-
-def eid2name(eid):
-    return eventNames[eid2key(eid)]
+import gta.eventIDs
 
 class GamepadTask(BaseTask):
 
@@ -76,6 +38,6 @@ class GamepadRecorder(BaseRecorder):
         while not self.resultsQueue.empty():
             time, (eventKey, eventValue) = self.resultsQueue.get()
             self._resultsList.append((
-                time, (eventIDs[eventKey], eventValue)
+                time, (gta.eventIDs.keys2eids[eventKey], eventValue)
             ))
         return self._resultsList
