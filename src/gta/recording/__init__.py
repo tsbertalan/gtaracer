@@ -1,7 +1,9 @@
-import time
+import time, os
 from multiprocessing import Process, Manager
 
 import numpy as np
+
+import gta.utils
 
 class BaseTask(object):
 
@@ -88,6 +90,30 @@ class BaseRecorder(object):
     @property
     def times(self):
         return np.array([t for (t, r) in self.resultsList])
+
+    def toSave(self):
+        return dict(
+            results=self.results,
+            times=self.times,
+        )
+
+    def save(self, fpath=None, compressed=False, **kwargs):
+        start = time.time()
+        if compressed:
+            saver = np.savez_compressed
+        else:
+            saver = np.savez
+        if fpath is None:
+            fpath = os.path.join(os.path.expanduser('~'), 'data', '%s-%s.np' % (
+                type(self).__name__, start,
+            ))
+            if compressed:
+                fpath += 'z'
+        dirname = os.path.dirname(fpath)
+        gta.utils.mkdir_p(dirname)
+        print('Saving to %s ... ' % fpath, end='')
+        saver(fpath, **self.toSave(**kwargs))
+        print('done (%.3g s).' % (time.time() - start,))
 
 
 class DemoTask(BaseTask):
