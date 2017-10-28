@@ -107,6 +107,7 @@ class vJoy(object):
                 
 
 vj = vJoy()
+vj.open()
 
 # valueX, valueY between -1.0 and 1.0
 # scale between 0 and 16000
