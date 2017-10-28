@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 
 import gta.recording.vision
@@ -53,6 +55,8 @@ class UnifiedRecorder(BaseRecorder):
 
     def XYT(self, sparse=False, stripKeyboardPartIfExcluded=True):
 
+        start = time.time()
+
         # Extract events as they happened.
         Y, Ty = self.YT()
         X, Tx = self.XT()
@@ -98,5 +102,10 @@ class UnifiedRecorder(BaseRecorder):
             import scipy.sparse
             YatX = scipy.sparse.csr_matrix(YatX)
 
+        print('Generated XYT in %.3g seconds.' % (time.time() - start,))
+
         return X, YatX, Tx
 
+    def toSave(self):
+        X, Y, T = self.XYT()
+        return dict(X=X, Y=Y, T=T)

@@ -1,4 +1,5 @@
 keyboard
+ipywidgets
 tqdm
 numpy
 win32gui

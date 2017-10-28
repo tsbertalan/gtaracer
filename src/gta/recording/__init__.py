@@ -104,16 +104,16 @@ class BaseRecorder(object):
         else:
             saver = np.savez
         if fpath is None:
-            fpath = os.path.join(os.path.expanduser('~'), 'data', '%s-%s.np' % (
+            fpath = os.path.join(os.path.expanduser('~'), 'data', '%s-%s.npz' % (
                 type(self).__name__, start,
             ))
-            if compressed:
-                fpath += 'z'
         dirname = os.path.dirname(fpath)
         gta.utils.mkdir_p(dirname)
         print('Saving to %s ... ' % fpath, end='')
-        saver(fpath, **self.toSave(**kwargs))
+        toSave = self.toSave(**kwargs)
+        saver(fpath, **toSave)
         print('done (%.3g s).' % (time.time() - start,))
+        return toSave
 
 
 class DemoTask(BaseTask):
