@@ -2,7 +2,7 @@ import vjoy
 
 class Axis(object):
     
-    def __init__(self, vjoyName, inRange=(-1., 1.), outRange=(0, 32000), neutralInValue=0):
+    def __init__(self, vjoyName, inRange=(-.5, .5), outRange=(0, 32000), neutralInValue=0):
         self.vjoyName = vjoyName
         self.inRange = inRange
         self.outRange = outRange
@@ -10,7 +10,8 @@ class Axis(object):
         self.outValue = self(neutralInValue)
         
     def __call__(self, x):
-        assert self.inRange[0] <= x <= self.inRange[1]
+        x = min(max(x, self.inRange[0]), self.inRange[1])
+        #assert self.inRange[0] <= x <= self.inRange[1], x
         din = self.inRange[1] - self.inRange[0]
         dout = self.outRange[1] - self.outRange[0]
         outFloat = (x - self.inRange[0]) * dout / din + self.outRange[0]
@@ -19,8 +20,18 @@ class Axis(object):
     def setValue(self, x):
         outValue = self(x)
         self.outValue = outValue
-   
 
+
+# class Button(object):
+
+#     def __init__(self, vjoyName, neutralInValue=False):
+#         self.vjoyName = vjoyName
+#         self.outValue = neutralInValue
+
+#     def setValue(self, x):
+#         self.outValue = x
+
+   
 class JoystickEmulator(object):
     
     def __init__(self):
