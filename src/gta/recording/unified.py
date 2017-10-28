@@ -1,17 +1,17 @@
 import numpy as np
 
-import gta.vision
-import gta.keyboard
-import gta.gamepad
-from gta.recorders import BaseRecorder
+import gta.recording.vision
+import gta.recording.keyboard
+import gta.recording.gamepad
+from gta.recording import BaseRecorder
 
 class UnifiedRecorder(BaseRecorder):
 
     def __init__(self, visionPeriod=.01, gamepadPeriod=.01, includeKeyboard=True):
-        self.xrecorder = gta.vision.VisionRecorder(period=visionPeriod)
-        self.yrecorders = [gta.gamepad.GamepadRecorder(period=gamepadPeriod)]
+        self.xrecorder = gta.recording.vision.VisionRecorder(period=visionPeriod)
+        self.yrecorders = [gta.recording.gamepad.GamepadRecorder(period=gamepadPeriod)]
         if includeKeyboard:
-            self.yrecorders.append(gta.keyboard.KeyboardRecorder())
+            self.yrecorders.append(gta.recording.keyboard.KeyboardRecorder())
         self.includeKeyboard = includeKeyboard
         self.recorders = list(self.yrecorders)
         self.recorders.append(self.xrecorder)

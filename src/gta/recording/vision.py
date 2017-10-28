@@ -1,7 +1,7 @@
 import win32gui, win32com
 import numpy as np
 
-from gta.recorders import BaseRecorder, BaseTask
+from gta.recording import BaseRecorder, BaseTask
 
 
 class Window(object):

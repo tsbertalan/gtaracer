@@ -1,6 +1,6 @@
 import keyboard
 
-from gta.recorders import BaseRecorder
+from gta.recording import BaseRecorder
 import gta.eventIDs
 
 class KeyboardRecorder(BaseRecorder):

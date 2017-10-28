@@ -3,7 +3,7 @@ import time
 
 import xinput
 
-from gta.recorders import BaseRecorder, BaseTask
+from gta.recording import BaseRecorder, BaseTask
 import gta.eventIDs
 
 class GamepadTask(BaseTask):

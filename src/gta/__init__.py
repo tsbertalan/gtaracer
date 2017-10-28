@@ -236,7 +236,7 @@ def getBar(tqdm_notebook):
         bar = tqdm.tqdm
     return bar
 
-from gta.vision import Window
+from gta.recording.vision import Window
 class GTA(Window, GTAdata):
 
     def __init__(self, fpath=None):
