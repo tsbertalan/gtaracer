@@ -1,27 +1,44 @@
+'''The internet is a series of tubes.
+
+Remote:
+>>> source = pipe.Source()
+
+Local:
+>>> sink = pipe.Sink('remote.vpn.tomsb.net')
+>>> import numpy as np
+>>> big = np.arange(1000*1000).reshape((1000, 1000))
+>>> big[-1, -1]
+999999
+
+>>> sink.put(big)
+
+Remote:
+>>> big = source.get()
+>>> type(big)
+numpy.ndarray
+>>> big[-1, -1]
+999999
+
+'''
 import socket, time, pickle, struct
 
 # https://stackoverflow.com/questions/34653875/python-how-to-send-data-over-tcp
 # https://wiki.python.org/moin/TcpCommunication
 
-class Client(object):
+
+class Sink(object):
     def __init__(self, 
         # The same port as used by the server
-        host = socket.gethostname(),
+        host=socket.gethostname(),
         port=44444,
         ):
         self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.s.connect((host, port))
 
-    def send(self, bytes):
-        self.s.sendall(bytes)
-
-    def recv(self, length=1024):
-        return self.s.recv(1024)
-
     def __del__(self):
         self.s.close()
 
-    def sendMsg(self, msg):
+    def put(self, msg):
         msg = pickle.dumps(msg)
         # Prefix each message with a 4-byte length (network byte order)
         self.s.sendall(
@@ -31,41 +48,24 @@ class Client(object):
         )
 
 
-class Server(object):
+class Source(object):
 
     def __init__(self,
-        port = 44444,     # Arbitrary non-privileged port
-        host = '',        # Symbolic name meaning all available interfaces
+        port=44444,     # Arbitrary non-privileged port
+        host='',        # Symbolic name meaning all available interfaces
         ):
         self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.s.bind((host, port))
         self.s.listen(1)
         
-    def connect(self):
+    def _connect(self):
         if not hasattr(self, 'conn'):
             self.conn, self.connAddr = self.s.accept()
             print('Connected by', self.connAddr)
 
-    def recv(self, connect=True, length=1024, sleep=1):
+    def get(self, sleep=1, connect=True, pbar=False):
         if connect:
-            self.connect()
-
-        while True:
-            data = self.conn.recv(length)
-
-            if not data:
-                time.sleep(sleep)
-            else:
-                return data
-
-    def send(self, bytes, connect=True):
-        if connect:
-            self.connect()
-        self.conn.sendall(bytes)
-
-    def recvMsg(self, sleep=1, connect=True, pbar=False):
-        if connect:
-            self.connect()
+            self._connect()
         while True:
             # Read message length and unpack it into an integer
             raw_msglen = self._recvall(4)
@@ -94,6 +94,7 @@ class Server(object):
             if not packet:
                 return None
             data += packet
+        if pbar: pbar.update(n - pbar.n)
         return data
 
     def __del__(self):
