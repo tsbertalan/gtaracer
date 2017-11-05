@@ -15,7 +15,7 @@ import time
 from tqdm import tqdm
 
 import gta.utils, os
-import gta.nn
+from gta.nn.models import SimpleConvNet as Arch
 
 MODEL_NAME = 'otg-balanced'
 
@@ -32,44 +32,13 @@ MODEL_NAME = 'otg-balanced'
 #nk = [0,0,0,0,0,0,0,0,1]
 n_classes = 4 + 4 + 1
 
-class Arch(gta.nn.ConvNet):
-        
-    def __call__(self, x, name='predictions'):
-        # def td(*args, **kwargs):
-        #     x = self._addConv2d(*args, **kwargs)
-        #     print(x.shape)
-        #     return x
-        td = self._addConv2d
-        fc = self._addFc
-        #self.keep_prob = tf.placeholder_with_default(.5, shape=())
-        
-        x = td(x, (8, 8, self.c, 12), padding='SAME', pooling=False)
-        x = td(x, (8, 8, int(x.shape[-1]), 12), padding='SAME')
-        #x = tf.nn.dropout(x, self.keep_prob)
-        
-        x = td(x, (3, 3, int(x.shape[-1]), 16), padding='SAME', pooling=False)
-        x = td(x, (3, 3, int(x.shape[-1]), 16), padding='SAME')
-        
-        x = td(x, (3, 3, int(x.shape[-1]), 32), padding='SAME', pooling=False)
-        x = td(x, (3, 3, int(x.shape[-1]), 32), padding='VALID')
-        
-        x = td(x, (3, 3, int(x.shape[-1]), 64), padding='SAME', pooling=False)
-        x = td(x, (3, 3, int(x.shape[-1]), 64), padding='VALID')
-        
-        x = tf.contrib.layers.flatten(x)
-        
-        x = fc(x, (int(x.shape[-1]), 32))
-        x = fc(x, (int(x.shape[-1]), n_classes), name=name)
-        
-        return x
-
 image_shape = WIDTH, HEIGHT, NCHANNELS = 50, 65, 3
 x = tf.placeholder(tf.float32, (None, *image_shape), name='images')
 y_classlabels = tf.placeholder(tf.uint8, (None, 1), name='classLabels')
 
 # Define tensors.
-net = Arch(c=NCHANNELS)
-logits = net(x)
+net = Arch(c=NCHANNELS, n_classes=n_classes)
+logits = net(x, name='logits')
 y = tf.reshape(tf.one_hot(y_classlabels, n_classes), (-1, n_classes))
 cross_entropy = tf.nn.softmax_cross_entropy_with_logits(labels=y, logits=logits)
 softmax_prob = tf.nn.softmax(logits)
