@@ -2,4 +2,8 @@ keyboard
 ipywidgets
 tqdm
 numpy
-win32gui
+matplotlib
+tensorflow-gpu
+pyglet
+scipy
+sklearn

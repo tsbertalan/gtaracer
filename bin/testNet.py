@@ -11,16 +11,12 @@ import tqdm
 import gta.utils, os
 import gta.nn
 
-fpath = os.path.join(gta.utils.home, 'data', 'UnifiedRecorder-1509207348.4853144.npz')
+fpath = os.path.join(gta.utils.home, 'data', 'gta', 'UnifiedRecorder-1509210169.3261402.npz')
 
 keepEids = [0, 2, 5]
 
 with gta.utils.timeit('Loading data'):
-    try:
-        saved.keys()
-    except NameError:
-        # Data not loaded.
-        saved = np.load(fpath)
+    saved = np.load(fpath)
     DT = np.diff(saved['T'])
     X = saved['X'][1:]
     # Only keep the first 6 features (gamepad; leave out buttons)
