@@ -1,4 +1,4 @@
-import win32gui, win32com
+import win32gui, win32com, win32com.client
 import numpy as np
 
 from gta.recording import BaseRecorder, BaseTask
@@ -23,11 +23,15 @@ class Window(object):
         win32gui.SetActiveWindow(self._hwnd)
         
     def getBbox(self):
-        return win32gui.GetWindowRect(self._hwnd)
+        a, b, c, d = win32gui.GetWindowRect(self._hwnd)
+        return a + 3, b + 26, c - 3, d - 3 # Remove Windows chrome.
     
-    def grab(self):
+    def grab(self, bbox=None, relativeBbox=None):
         from PIL import ImageGrab, Image
-        return ImageGrab.grab(self.getBbox())
+        if bbox is None: bbox = self.getBbox()
+        if relativeBbox is not None:
+            bbox = (np.array(bbox) + relativeBbox).tolist()
+        return ImageGrab.grab(bbox)
 
     # Not sure what the rest of this is for.
 
@@ -59,25 +63,38 @@ class GtaWindow(Window):
         widsByTitle = {win32gui.GetWindowText(wid): wid for wid in wids}
         gtaWid = widsByTitle['Grand Theft Auto V']
         
-        self.widsByTitle = widsByTitle
+        #self.widsByTitle = widsByTitle
 
         Window.__init__(self, gtaWid)
+
+    @property
+    def img(self):
+        return self.grab()
+
+    @property
+    def minimap(self):
+        return self.grab(relativeBbox=[57, 589, -1092, -33])
 
 
 class VisionTask(BaseTask):
 
-    def __init__(self):
+    def __init__(self, minimap=False):
+        self.minimap = minimap
         self.window = GtaWindow()
 
     def __call__(self):
-        img = np.array(self.window.grab())
+        if self.minimap:
+            img = self.window.minimap
+        else:
+            img = self.window.img
+        img = np.array(img)
         print('Got image of shape', img.shape, '.')
         return img
 
 
 class VisionRecorder(BaseRecorder):
 
-    def __init__(self, period=.01):
+    def __init__(self, period=.01, **taskConstructorKwargs):
         self.gtaWindow = GtaWindow()
-        super(self.__class__, self).__init__(period, Task=VisionTask)
+        super(self.__class__, self).__init__(period, Task=VisionTask, **taskConstructorKwargs)
 
