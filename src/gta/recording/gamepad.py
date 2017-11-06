@@ -1,10 +1,95 @@
 from collections import deque
+import numpy as np
 import time
 
 import xinput
 
 from gta.recording import BaseRecorder, BaseTask
 import gta.eventIDs
+
+import multiprocessing
+import multiprocessing.queues
+
+from collections import deque
+
+
+class _GamepadListener(object):
+
+    def __init__(self):
+        try:
+            self.joystick = xinput.XInputJoystick.enumerate_devices()[0]
+        except IndexError as e:
+            print('Probably no gamepads are connected.')
+            raise e
+        self.state = np.zeros((20,))  # probably actually 16 long
+
+        @self.joystick.event
+        def on_button(button, pressed):
+            print('Button', button, ':', pressed)
+            self.state[gta.eventIDs.keys2eids[button]] = pressed
+
+        @self.joystick.event
+        def on_axis(axis, value):
+            print('Axis', axis, ':', value)
+            self.state[gta.eventIDs.keys2eids[axis]] = value
+
+    def __call__(self):
+        self.joystick.dispatch_events()
+
+def _dispatchEvents(resultsQueue, period):
+    listener = _GamepadListener()
+    print('Dispatching events.')
+    while True:
+            listener()
+            resultsQueue.put(np.copy(listener.state))
+            time.sleep(period)
+
+class GamepadQuery(object):
+
+    def __init__(self, maxOldStates=10, listenPeriod=.0001):
+        self._resultsQueue = multiprocessing.Queue()
+        self._transferred = deque(maxlen=maxOldStates)
+        self._listenPeriod = listenPeriod
+        self.start()
+
+    def start(self):
+        self.worker = multiprocessing.Process(target=_dispatchEvents, args=(self._resultsQueue, self._listenPeriod))
+        self.worker.daemon = True
+        self.worker.start()
+
+    def stop(self):
+        if hasattr(self, 'worker'):
+            self.worker.terminate()
+
+    def __del__(self):
+        self.stop()
+
+    def _transfer(self):
+        while True:
+            try:
+                self._transferred.append(self._resultsQueue.get_nowait())
+            except multiprocessing.queues.Empty:
+                break
+
+    @property
+    def state(self):
+        self._transfer()
+        if len(self) == 0:
+            return np.zeros((20,))
+        else:
+            return np.copy(self._transferred[-1])
+
+    def __len__(self):
+        self._transfer()
+        return len(self._transferred)
+
+    def __getitem__(self, index):
+        return self._transferred[index]
+
+    # def save(self, fpath):
+    #     self._transfer()
+    #     np.save(fpath, np.stack([self._transferred.popleft() for _ in range(len(self._transferred))]))
+
 
 class GamepadTask(BaseTask):
 
