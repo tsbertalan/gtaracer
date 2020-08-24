@@ -1,7 +1,92 @@
-import win32gui, win32com, win32com.client
+import time
+
+# Make program aware of DPI scaling
+from ctypes import windll
+user32 = windll.user32
+user32.SetProcessDPIAware()
+#From this point on calls like GetWindowRect() should return the proper values.
+
+import win32gui
+import win32com
+import win32com.client
+import win32con
 import numpy as np
 
 from gta.recording import BaseRecorder, BaseTask
+import cv2
+from PIL import Image
+
+def win32_grab(hwnd, rect):
+    import win32gui
+    import win32ui 
+
+    left, top, right, bot = rect
+    w = right - left
+    h = bot - top
+    
+    hwnd_dc = win32gui.GetWindowDC(hwnd)
+    mfc_dc = win32ui.CreateDCFromHandle(hwnd_dc)
+    save_dc = mfc_dc.CreateCompatibleDC()
+    save_bitmap = win32ui.CreateBitmap()
+    save_bitmap.CreateCompatibleBitmap(mfc_dc, w, h)
+    save_dc.SelectObject(save_bitmap)
+
+    save_dc.BitBlt((0,0),(w, h), mfc_dc, (0,0), win32con.SRCCOPY)
+
+    windll.user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), 0)
+    bmpinfo = save_bitmap.GetInfo()
+    bmpstr = save_bitmap.GetBitmapBits(True)
+
+    # This creates an Image object from Pillow
+    bmp = Image.frombuffer('RGB',
+                            (bmpinfo['bmWidth'],
+                            bmpinfo['bmHeight']),
+                            bmpstr, 'raw', 'BGRX', 0, 1)
+
+    # save_bitmap.SaveBitmapFile(save_dc, bmpfilenamename)
+    
+
+    # Free Resources
+    mfc_dc.DeleteDC()
+    save_dc.DeleteDC()
+    win32gui.ReleaseDC(hwnd, hwnd_dc)
+    win32gui.DeleteObject(save_bitmap.GetHandle())
+
+    return bmp
+
+def win32_grab2(hwnd, rect):
+    import win32gui
+    import win32ui 
+    
+    left, top, right, bot = rect
+    w = right - left
+    h = bot - top
+
+    hwnd_dc = win32gui.GetWindowDC(hwnd)
+    mfc_dc = win32ui.CreateDCFromHandle(hwnd_dc)
+    save_dc = mfc_dc.CreateCompatibleDC()
+    save_bitmap = win32ui.CreateBitmap()
+    save_bitmap.CreateCompatibleBitmap(mfc_dc, w, h)
+    save_dc.SelectObject(save_bitmap)
+
+    windll.user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), 0)
+    bmpinfo = save_bitmap.GetInfo()
+    bmpstr = save_bitmap.GetBitmapBits(True)
+
+    # This creates an Image object from Pillow
+    bmp = Image.frombuffer('RGB',
+                            (bmpinfo['bmWidth'],
+                            bmpinfo['bmHeight']),
+                            bmpstr, 'raw', 'BGRX', 0, 1)
+    # bmp.save("asdf.png")
+
+    # Free Resources
+    mfc_dc.DeleteDC()
+    save_dc.DeleteDC()
+    win32gui.ReleaseDC(hwnd, hwnd_dc)
+    win32gui.DeleteObject(save_bitmap.GetHandle())
+
+    return bmp
 
 
 class Window(object):
@@ -24,14 +109,19 @@ class Window(object):
         
     def getBbox(self):
         a, b, c, d = win32gui.GetWindowRect(self._hwnd)
-        return a + 3, b + 26, c - 3, d - 3 # Remove Windows chrome.
-    
+        return a+3, b+32, c-3, d-3
+        # Experimentally found for windowed game at game size 1024x768, without hidpi scaling trick
+        # return a+35, b+80, c+235, d + 203
+        
     def grab(self, bbox=None, relativeBbox=None):
+        start = time.time()
         from PIL import ImageGrab, Image
         if bbox is None: bbox = self.getBbox()
         if relativeBbox is not None:
             bbox = (np.array(bbox) + relativeBbox).tolist()
-        return ImageGrab.grab(bbox)
+        out = ImageGrab.grab(bbox, all_screens=True)
+        # print('Grabbed in', time.time() - start, 'sec.')
+        return out
 
     # Not sure what the rest of this is for.
 
@@ -67,13 +157,51 @@ class GtaWindow(Window):
 
         Window.__init__(self, gtaWid)
 
+        self.car_origin = 49, 46 # Make second number bigger if we tend to go into the right shoulder.
+        self.last_cycle_time = time.time()
+
     @property
     def img(self):
         return self.grab()
 
     @property
     def minimap(self):
-        return self.grab(relativeBbox=[57, 589, -1092, -33])
+        return self.grab(relativeBbox=[35, 588, -758, -38])
+
+    @property
+    def micromap(self):
+        return self.grab(relativeBbox=[100, 640, -820, -52])
+
+    @property
+    def track_mask(self):
+        micromap = np.array(self.micromap)
+        # hsv = cv2.cvtColor(micromap, cv2.COLOR_RGB2HSV)
+        # r = micromap[..., 0]
+        # g = micromap[..., 1]
+        # b = micromap[..., 2]
+
+        # s = hsv[..., 1]
+
+        AND = np.logical_and
+        OR = np.logical_or
+
+        lower_magenta = np.array([163, 79, 238])
+        upper_magenta = np.array([173, 89, 248])
+
+        lower_yellow = np.array([230, 190, 70])
+        upper_yellow = np.array([250, 210, 90])
+
+        return (
+            cv2.erode(
+                # AND(s > 80, AND(r > 60, b > 50)).astype('uint8') * 255,
+                OR(
+                    cv2.inRange(micromap, lower_magenta, upper_magenta),
+                    cv2.inRange(micromap, lower_yellow, upper_yellow),
+                ).astype('uint8')
+                ,
+                np.ones((3, 3))
+            )
+        ).astype('bool')
 
 
 class VisionTask(BaseTask):

@@ -1,6 +1,6 @@
+import numpy as np
 from sys import path
 from os.path import join, expanduser
-import numpy as np
 path.append(join(expanduser('~'), 'Dropbox', 'Projects', 'GTARacer', 'src'))
 
 import vjoy
@@ -66,7 +66,7 @@ class Gamepad:
         positions = {}
         for val, axis in zip(xstick_lt_rt, self._axes):
             positions.update(axis(val))
-        print(positions)
+        # print(positions)
         joypos = self.vj.generateJoystickPosition(**positions)
         self.vj.update(joypos)
 
@@ -96,7 +96,7 @@ if __name__ == '__main__':
 
     for _ in range(100):
         # gp(accel=0, decel=0, steer=0)
-        gp(steer=1, decel=0, accel=0)
+        gp(steer=0, decel=0, accel=0)
         # gp()
         sleep(.01)
 

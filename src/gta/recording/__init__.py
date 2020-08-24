@@ -131,4 +131,4 @@ class DemoRecorder(BaseRecorder):
         super(self.__class__, self).__init__(period, Task=DemoTask, **k)
 
     
-from. import vision, keyboard, gamepad, unified
+# from. import vision, keyboard, gamepad, unified
