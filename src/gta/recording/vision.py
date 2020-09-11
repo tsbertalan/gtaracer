@@ -4,6 +4,16 @@ import time
 from ctypes import windll
 user32 = windll.user32
 user32.SetProcessDPIAware()
+
+from os.path import dirname, join
+import sys
+import os
+here = dirname(__file__)
+if os.name == 'nt':
+    # VSCode does some shenanigans https://github.com/microsoft/vscode-python/issues/13811
+    here = here.replace('/', '\\')
+sys.path.append(join(here, '..', '..'))
+
 #From this point on calls like GetWindowRect() should return the proper values.
 
 import win32gui
@@ -15,6 +25,21 @@ import numpy as np
 from gta.recording import BaseRecorder, BaseTask
 import cv2
 from PIL import Image
+
+import wx
+
+class Grab_wx:
+    def __init__(self):
+        self.app = wx.App()  # Need to create an App instance before doing anything
+
+    def __call__(self):
+        screen = wx.ScreenDC()
+        size = screen.GetSize()
+        bmp = wx.EmptyBitmap(size[0], size[1])
+        mem = wx.MemoryDC(bmp)
+        mem.Blit(0, 0, size[0], size[1], screen, 0, 0)
+        del mem  # Release bitmap
+        return bmp
 
 def win32_grab(hwnd, rect):
     import win32gui
@@ -88,6 +113,22 @@ def win32_grab2(hwnd, rect):
 
     return bmp
 
+def grab_pyautogui(region=None):
+    import pyautogui
+    if region is not None:
+        return pyautogui.screenshot(region='region')
+    else:
+        return pyautogui.screenshot()
+
+def grab_pyautogui_bbox(bbox):
+    from_left, from_top, from_right, from_bottom = bbox
+    width = from_right - from_left
+    height = from_bottom - from_top
+    print(bbox, [width, height])
+    return grab_pyautogui(region=(from_left, from_top, width, height))
+    im = grab_pyautogui()
+    return np.array(im)[from_top:from_bottom, from_left:from_right]
+
 
 class Window(object):
     def __init__(self, wid):
@@ -114,12 +155,15 @@ class Window(object):
         # return a+35, b+80, c+235, d + 203
         
     def grab(self, bbox=None, relativeBbox=None):
-        start = time.time()
-        from PIL import ImageGrab, Image
+        # start = time.time()
         if bbox is None: bbox = self.getBbox()
         if relativeBbox is not None:
             bbox = (np.array(bbox) + relativeBbox).tolist()
-        out = ImageGrab.grab(bbox, all_screens=True)
+        if False:
+            out =  grab_pyautogui_bbox(bbox)
+        else:
+            from PIL import ImageGrab, Image
+            out = ImageGrab.grab(bbox, all_screens=True)
         # print('Grabbed in', time.time() - start, 'sec.')
         return out
 
@@ -153,55 +197,111 @@ class GtaWindow(Window):
         widsByTitle = {win32gui.GetWindowText(wid): wid for wid in wids}
         gtaWid = widsByTitle['Grand Theft Auto V']
         
-        #self.widsByTitle = widsByTitle
-
         Window.__init__(self, gtaWid)
 
-        self.car_origin = 49, 46 # Make second number bigger if we tend to go into the right shoulder.
+        self.window_size = self.grab().size[:2]
+        print('Window size:', self.window_size)
+
+        # Make second number bigger if we tend to go into the right shoulder.
+        self.car_origin = self.wscale(45, 48)
+        self.car_origin_minimap = self.wscale(100, 110)
         self.last_cycle_time = time.time()
+
+    def wscale(self, a, b, c=None, d=None):
+        w1 = float(self.window_size[1]) / 768.
+        w2 = float(self.window_size[0]) / 1024.
+        out = [
+            type(a)(w1 * a), type(b)(w2 * b)
+        ]
+
+        if c is not None and d is not None:
+            out.extend([
+                type(c)(w1 * c), type(d)(w2 * d)
+            ])
+
+        return tuple(out)
 
     @property
     def img(self):
         return self.grab()
 
+    @staticmethod
+    def minimap_perspective_transform(img):
+        from_points = np.array([
+            (85, 70),
+            (140, 70),
+            (150, 108),
+            (75, 108),
+        ]) # x, y coordinates
+
+        lined = cv2.polylines(np.array(img), [np.array(from_points)], True, (255, 255, 0), 1)
+        cv2.imshow('Before Perspective Transform', lined)
+
+        # TODO: The folowing points are backwards (y,x) and need to be tuned.
+        to_points = [
+            (55, 115),
+            (85, 115),
+            (85, 200),
+            (55, 200),
+        ]
+
+        M = cv2.getPerspectiveTransform(from_points, to_points)
+        warped = cv2.warpPerspective(img, M)#, (maxWidth, maxHeight))
+        cv2.imshow('Perspective Warped', warped, img.shape[:2])
+        cv2.waitKey(0)
+
     @property
     def minimap(self):
-        return self.grab(relativeBbox=[35, 588, -758, -38])
+        return self.grab(relativeBbox=self.wscale(35, 588, -758, -38))
 
     @property
     def micromap(self):
-        return self.grab(relativeBbox=[100, 640, -820, -52])
+        return self.grab(relativeBbox=self.wscale(100, 640, -820, -52))
 
     @property
     def track_mask(self):
-        micromap = np.array(self.micromap)
-        # hsv = cv2.cvtColor(micromap, cv2.COLOR_RGB2HSV)
-        # r = micromap[..., 0]
-        # g = micromap[..., 1]
-        # b = micromap[..., 2]
+        return self.get_track_mask()
+
+    def get_track_mask(self, basemap_kind='micromap', do_erode=True):
+        if basemap_kind == 'micromap':
+            basemap = np.array(self.micromap)
+        else:
+            assert basemap_kind == 'minimap'
+            basemap = np.array(self.minimap)
+        # hsv = cv2.cvtColor(basemap, cv2.COLOR_RGB2HSV)
+        # r = basemap[..., 0]
+        # g = basemap[..., 1]
+        # b = basemap[..., 2]
 
         # s = hsv[..., 1]
 
+        from functools import reduce
         AND = np.logical_and
-        OR = np.logical_or
+        OR = lambda *args: reduce(np.logical_or, args)
 
-        lower_magenta = np.array([163, 79, 238])
-        upper_magenta = np.array([173, 89, 248])
+        # cv2.imshow('tm', basemap)
+        # cv2.waitKey(0)
 
-        lower_yellow = np.array([230, 190, 70])
-        upper_yellow = np.array([250, 210, 90])
+        def RGB(r, g, b, radius=5):
+            lower = np.array([r-5, g-5, b-5])
+            upper = np.array([r+5, g+5, b+5])
+            return cv2.inRange(basemap, lower, upper)
 
-        return (
-            cv2.erode(
-                # AND(s > 80, AND(r > 60, b > 50)).astype('uint8') * 255,
-                OR(
-                    cv2.inRange(micromap, lower_magenta, upper_magenta),
-                    cv2.inRange(micromap, lower_yellow, upper_yellow),
-                ).astype('uint8')
-                ,
-                np.ones((3, 3))
-            )
-        ).astype('bool')
+        out = OR(
+            # RGB(162, 29, 89, radius=10), # purple waypoint tick
+            RGB(79,5,154),
+            RGB(161,73,239),
+            RGB(168, 84, 243), # magenta line
+            # RGB(240, 200, 90), # yellow line
+            RGB(240,200,80), # Race dots
+        ).astype('uint8')
+
+        if do_erode:
+            out = cv2.erode(out, np.ones((3, 3)))
+
+
+
+        return out.astype('bool'), basemap
 
 
 class VisionTask(BaseTask):
@@ -226,3 +326,7 @@ class VisionRecorder(BaseRecorder):
         self.gtaWindow = GtaWindow()
         super(self.__class__, self).__init__(period, Task=VisionTask, **taskConstructorKwargs)
 
+
+if __name__ == '__main__':
+    window = GtaWindow()
+    window.minimap_perspective_transform(window.minimap)
