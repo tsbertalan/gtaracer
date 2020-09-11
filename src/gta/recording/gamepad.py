@@ -18,19 +18,16 @@ class _GamepadListener(object):
     def __init__(self):
         try:
             self.joystick = xinput.XInputJoystick.enumerate_devices()[0]
-        except IndexError as e:
-            print('Probably no gamepads are connected.')
-            raise e
+        except IndexError:
+            raise IndexError('Probably no gamepads are connected.')
         self.state = np.zeros((20,))  # probably actually 16 long
 
         @self.joystick.event
         def on_button(button, pressed):
-            print('Button', button, ':', pressed)
             self.state[gta.eventIDs.keys2eids[button]] = pressed
 
         @self.joystick.event
         def on_axis(axis, value):
-            print('Axis', axis, ':', value)
             self.state[gta.eventIDs.keys2eids[axis]] = value
 
     def __call__(self):
@@ -38,11 +35,13 @@ class _GamepadListener(object):
 
 def _dispatchEvents(resultsQueue, period):
     listener = _GamepadListener()
-    print('Dispatching events.')
     while True:
-            listener()
-            resultsQueue.put(np.copy(listener.state))
+        listener()
+        resultsQueue.put(np.copy(listener.state))
+        try:
             time.sleep(period)
+        except KeyboardInterrupt:
+            break
 
 class GamepadQuery(object):
 
