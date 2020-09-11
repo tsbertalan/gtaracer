@@ -1,5 +1,3 @@
-import keyboard
-
 from gta.recording import BaseRecorder
 import gta.eventIDs
 
@@ -12,9 +10,11 @@ class KeyboardRecorder(BaseRecorder):
         self.resultsQueue.put(event)
 
     def start(self):
+        import keyboard
         keyboard.hook(self.eventCallback)
 
     def stop(self):
+        import keyboard
         keyboard.unhook(self.eventCallback)
 
     @property
