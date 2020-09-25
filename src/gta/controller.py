@@ -22,6 +22,8 @@ import gta.gameInputs.gamepad
 from PIL import Image
 import cv2
 
+DEFAULT_CAR_THROTTLE = 0.42
+
 class PointsError(ValueError):
     pass
 
@@ -35,23 +37,14 @@ class Controller:
         steer_limit = abs(steer_limit)
         self.gameWindow = gta.recording.vision.GtaWindow()
         self.draw_on_basemap = draw_on_basemap
-        self._too_few_points_maxiter = 1000
+        self._too_few_points_maxiter = 500
 
-        # grab = np.array(gta.recording.vision.win32_grab2(self.gameWindow._hwnd, self.gameWindow.getBbox()))
-        # print(grab.dtype)
-        # cv2.imshow(
-        #     'win32_grab',
-        #     grab
-        # )
-        # cv2.waitKey(1)
+       
         self.angle_weight = 4
         self.offset_weight = .5
         if pretuned is not None:
             print('Using', pretuned, 'PID pretuning.')
-            # # no anti-deadzone
-            # kp, ki, kd = dict(car=(.1, .02, .05), slowcarrace=(1.5, .1, .01), race=(.8, .1, .01), rcrace=(.8, .05, .01), boatrace=(1.6, .06, .005), boat=(.8, 0.02, 0), sailboat=(.9, .05, 0))[pretuned]
-            # with 23% anti-deadzone
-            kp, ki, kd = dict(car=(.1, .01, .02), slowcarrace=(1.5, .1, .01), race=(.8, .1, .01), rcrace=(.8, .05, .01), boatrace=(1.6, .06, .005), boat=(.8, 0.02, 0), sailboat=(.9, .05, 0))[pretuned]
+            kp, ki, kd = dict(car=(.1, .02, .02), slowcarrace=(1.5, .1, .01), race=(.8, .1, .01), rcrace=(.8, .05, .01), boatrace=(1.6, .06, .005), boat=(.8, 0.02, 0), sailboat=(.9, .05, 0))[pretuned]
             self.filters_present = dict(
                 car=['all'],
                 race=['all'],
@@ -70,14 +63,14 @@ class Controller:
         self.pid.output_limits = (-steer_limit, steer_limit)
         self.gpad = gta.gameInputs.gamepad.Gamepad()
 
-        self.throttle_nominal = 0.38 if throttle is None else throttle
+        self.throttle_nominal = DEFAULT_CAR_THROTTLE if throttle is None else throttle
         if minimum_throttle is None:
             if pretuned == 'sailboat':
                 minimum_throttle = .6
             else:
                 minimum_throttle = .4
         self.minimum_throttle = min(self.throttle_nominal, minimum_throttle)
-        self.throttle_fuzz = 0
+        self.throttle_fuzz = 0.01
 
         self.brake = .0
         self.last_cycle_time = time.time()
@@ -190,22 +183,13 @@ class Controller:
         poly = np.poly1d(coeffs)
         slope = poly.deriv()
 
-        # import matplotlib.pyplot as plt
-        # fig, ax = plt.subplots()
-        # ax.imshow(tm)
-        # xl = ax.get_xlim(); yl = ax.get_ylim()
-        # y = np.linspace(0, rows, 32)
-        # x = poly(y)
-        # ax.plot(x, y, color='green')
-        # ax.scatter(self.gameWindow.car_origin[1], self.gameWindow.car_origin[0], marker='+', s=500)
-        # plt.show()
-
         if self.draw_on_basemap:
             display = basemap
         else:
             display = tm.astype('uint8')*255
             rows, cols = display.squeeze().shape
             display = np.dstack([display, display, display])
+            
         Y = np.arange(self.gameWindow.car_origin[0]).astype(int)
         X = poly(Y).astype(int)
         ok = np.logical_and(X>0, X<cols)
@@ -355,7 +339,7 @@ def main():
     car = args.mode.lower() == 'car'
     race = args.mode.lower() == 'race'
     boatrace = args.mode.lower() == 'boatrace'
-    if args.throttle is None: args.throttle = .38 if (car or race) else 0.6 if boatrace else 1.0
+    if args.throttle is None: args.throttle = DEFAULT_CAR_THROTTLE if (car or race) else 0.6 if boatrace else 1.0
     if args.error_kind is None: args.error_kind = 'cte' if car else 'heading'
     if args.steer_limit is None: args.steer_limit = .5 if (car or race) else 1.0
     if args.pid_tuning is None: args.pid_tuning = args.mode.lower()
@@ -373,7 +357,7 @@ def main():
             controller.step()
             
         except BaseException as e:
-            
+
             if isinstance(e, KeyboardInterrupt):
                 logger.info('User interrupted.')
                 break
