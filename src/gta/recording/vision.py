@@ -24,94 +24,40 @@ import numpy as np
 
 from gta.recording import BaseRecorder, BaseTask
 import cv2
-from PIL import Image
+from PIL import ImageGrab, Image
 
-import wx
 
-class Grab_wx:
+
+class WXGrabber:
     def __init__(self):
+        import wx
         self.app = wx.App()  # Need to create an App instance before doing anything
 
-    def __call__(self):
+    def __call__(self, bbox=None):
+        import wx
         screen = wx.ScreenDC()
-        size = screen.GetSize()
-        bmp = wx.EmptyBitmap(size[0], size[1])
+
+        if bbox is None:
+            size = screen.GetSize()
+            bbox = 0, 0, size[0], size[1]
+
+        x1, y1, x2, y2 = bbox
+        width = x2 - x1
+        height = y2 - y1
+
+        bmp = wx.EmptyBitmap(width, height)
         mem = wx.MemoryDC(bmp)
-        mem.Blit(0, 0, size[0], size[1], screen, 0, 0)
+        #https://wxpython.org/Phoenix/docs/html/wx.DC.html#wx.DC.Blit
+        mem.Blit(0, 0, width, height, screen, x1, y1)
         del mem  # Release bitmap
-        return bmp
 
-def win32_grab(hwnd, rect):
-    import win32gui
-    import win32ui 
+        img = bmp.ConvertToImage()
+        buf = img.GetDataBuffer() # use img.GetAlphaBuffer() for alpha data
+        arr = np.frombuffer(buf, dtype='uint8')
+        arr = arr.reshape([height, width, 3])
+        return Image.fromarray(arr)
 
-    left, top, right, bot = rect
-    w = right - left
-    h = bot - top
-    
-    hwnd_dc = win32gui.GetWindowDC(hwnd)
-    mfc_dc = win32ui.CreateDCFromHandle(hwnd_dc)
-    save_dc = mfc_dc.CreateCompatibleDC()
-    save_bitmap = win32ui.CreateBitmap()
-    save_bitmap.CreateCompatibleBitmap(mfc_dc, w, h)
-    save_dc.SelectObject(save_bitmap)
 
-    save_dc.BitBlt((0,0),(w, h), mfc_dc, (0,0), win32con.SRCCOPY)
-
-    windll.user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), 0)
-    bmpinfo = save_bitmap.GetInfo()
-    bmpstr = save_bitmap.GetBitmapBits(True)
-
-    # This creates an Image object from Pillow
-    bmp = Image.frombuffer('RGB',
-                            (bmpinfo['bmWidth'],
-                            bmpinfo['bmHeight']),
-                            bmpstr, 'raw', 'BGRX', 0, 1)
-
-    # save_bitmap.SaveBitmapFile(save_dc, bmpfilenamename)
-    
-
-    # Free Resources
-    mfc_dc.DeleteDC()
-    save_dc.DeleteDC()
-    win32gui.ReleaseDC(hwnd, hwnd_dc)
-    win32gui.DeleteObject(save_bitmap.GetHandle())
-
-    return bmp
-
-def win32_grab2(hwnd, rect):
-    import win32gui
-    import win32ui 
-    
-    left, top, right, bot = rect
-    w = right - left
-    h = bot - top
-
-    hwnd_dc = win32gui.GetWindowDC(hwnd)
-    mfc_dc = win32ui.CreateDCFromHandle(hwnd_dc)
-    save_dc = mfc_dc.CreateCompatibleDC()
-    save_bitmap = win32ui.CreateBitmap()
-    save_bitmap.CreateCompatibleBitmap(mfc_dc, w, h)
-    save_dc.SelectObject(save_bitmap)
-
-    windll.user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), 0)
-    bmpinfo = save_bitmap.GetInfo()
-    bmpstr = save_bitmap.GetBitmapBits(True)
-
-    # This creates an Image object from Pillow
-    bmp = Image.frombuffer('RGB',
-                            (bmpinfo['bmWidth'],
-                            bmpinfo['bmHeight']),
-                            bmpstr, 'raw', 'BGRX', 0, 1)
-    # bmp.save("asdf.png")
-
-    # Free Resources
-    mfc_dc.DeleteDC()
-    save_dc.DeleteDC()
-    win32gui.ReleaseDC(hwnd, hwnd_dc)
-    win32gui.DeleteObject(save_bitmap.GetHandle())
-
-    return bmp
 
 def grab_pyautogui(region=None):
     import pyautogui
@@ -119,6 +65,7 @@ def grab_pyautogui(region=None):
         return pyautogui.screenshot(region='region')
     else:
         return pyautogui.screenshot()
+
 
 def grab_pyautogui_bbox(bbox):
     from_left, from_top, from_right, from_bottom = bbox
@@ -128,6 +75,137 @@ def grab_pyautogui_bbox(bbox):
     return grab_pyautogui(region=(from_left, from_top, width, height))
     im = grab_pyautogui()
     return np.array(im)[from_top:from_bottom, from_left:from_right]
+
+
+class Win32Grabber:
+
+    def __init__(self, hwnd):
+        import win32gui, win32ui, wx
+
+        self.app = wx.App()
+        self.screen = wx.ScreenDC()
+        self.screen_size = self.screen.GetSize()
+
+        # from win32api import GetSystemMetrics
+        # print("Width =", GetSystemMetrics(0))
+        # print("Height =", GetSystemMetrics(1))
+
+        self.hwnd = hwnd
+
+    def __call__(self, bbox=None):
+
+        if bbox is None:
+            bbox = 0, 0, self.screen_size[0], self.screen_size[1]
+
+        # x1, y1, x2, y2 = bbox
+        # width = x2 - x1
+        # height = y2 - y1
+
+        import win32gui
+        import win32ui 
+        
+        left, top, right, bot = bbox
+        w = right - left
+        h = bot - top
+
+        hwnd_dc = win32gui.GetWindowDC(self.hwnd)
+        mfc_dc = win32ui.CreateDCFromHandle(hwnd_dc)
+        save_dc = mfc_dc.CreateCompatibleDC()
+        save_bitmap = win32ui.CreateBitmap()
+        save_bitmap.CreateCompatibleBitmap(mfc_dc, w, h)
+        save_dc.SelectObject(save_bitmap)
+
+        windll.user32.PrintWindow(self.hwnd, save_dc.GetSafeHdc(), 0)
+        bmpinfo = save_bitmap.GetInfo()
+        bmpstr = save_bitmap.GetBitmapBits(True)
+
+        # This creates an Image object from Pillow
+        bmp = Image.frombuffer('RGB',
+                                (bmpinfo['bmWidth'],
+                                bmpinfo['bmHeight']),
+                                bmpstr, 'raw', 'RGBX', 0, 1)
+        # bmp.save("asdf.png")
+
+        # Free Resources
+        mfc_dc.DeleteDC()
+        save_dc.DeleteDC()
+        win32gui.ReleaseDC(self.hwnd, hwnd_dc)
+        win32gui.DeleteObject(save_bitmap.GetHandle())
+
+        return bmp
+
+        # import win32gui
+        # import win32ui 
+        
+        # window_handle = win32gui.GetWindowDC(self.hwnd)
+        # window_dc = win32ui.CreateDCFromHandle(window_handle)
+        # memory = window_dc.CreateCompatibleDC()
+
+        # bitmap = win32ui.CreateBitmap()
+        # bitmap.CreateCompatibleBitmap(window_dc, width, height)
+        # memory.SelectObject(bitmap)
+        # #mem.Blit(0, 0, width, height, screen, x1, y1)
+        # memory.BitBlt((0, 0), (width, height), window_dc, (0, 0), win32con.SRCCOPY)
+        # # win32gui.BitBlt(memory, 0, 0, width, height, window_dc, x1, y1, win32con.SRCCOPY)
+        # # dataBitMap.SaveBitmapFile(cDC, bmpfilenamename)
+
+        # # bmp = wx.EmptyBitmap(width, height)
+        # # mem = wx.MemoryDC(bmp)
+        # # #https://wxpython.org/Phoenix/docs/html/wx.DC.html#wx.DC.Blit
+        # # mem.Blit(0, 0, width, height, screen, x1, y1)
+        # # del mem  # Release bitmap
+        # # img = bmp.ConvertToImage()
+        # arr = np.asarray(bitmap.GetBitmapBits(), dtype=np.uint8)
+
+        # # img = dataBitMap.ConvertToImage()
+        # # bmparray = np.asarray(dataBitMap.GetBitmapBits(), dtype=np.uint8)
+        # # pil_im = Image.frombuffer('RGB', (bmpinfo['bmWidth'], bmpinfo['bmHeight']), bmparray, 'raw', 'BGRX', 0, 1)
+        # # pil_array = np.array(pil_im)
+
+        # # buf = img.GetDataBuffer() # use img.GetAlphaBuffer() for alpha data
+        # # arr = np.frombuffer(buf, dtype='uint8')
+        # # arr = arr.reshape([height, width, 3])
+
+        # # Free Resources
+        # window_dc.DeleteDC()
+        # memory.DeleteDC()
+        # win32gui.DeleteObject(bitmap.GetHandle())
+        # win32gui.ReleaseDC(self.hwnd, window_handle)
+
+        # imbad = Image.fromarray(arr.reshape((-1, width, 3)))
+
+        # im = Image.fromarray(arr.reshape((height, width, 3)))
+        # return im
+
+
+class D3DGrabber:
+
+    def __init__(self):
+        import d3dshot, wx
+
+        # self.app = wx.App()
+        # self.screen = wx.ScreenDC()
+        # self.screen_size = self.screen.GetSize()
+
+        self.d = d3dshot.create(capture_output="numpy")
+        self.d.capture()
+        time.sleep(4)
+
+    def __call__(self, bbox):
+        # if bbox is None:
+        #     bbox = 0, 0, self.screen_size[0], self.screen_size[1]
+
+        left, top, right, bot = bbox
+        w = right - left
+        h = bot - top
+
+        frame = self.d.get_latest_frame()
+
+        out = frame[top:bot, left:right, :]
+        return out
+
+    def __del__(self):
+        self.d.stop()
 
 
 class Window(object):
@@ -154,17 +232,30 @@ class Window(object):
         # Experimentally found for windowed game at game size 1024x768, without hidpi scaling trick
         # return a+35, b+80, c+235, d + 203
         
-    def grab(self, bbox=None, relativeBbox=None):
-        # start = time.time()
+    def grab(self, bbox=None, relativeBbox=None, kind='PIL'):
+
         if bbox is None: bbox = self.getBbox()
+        
         if relativeBbox is not None:
             bbox = (np.array(bbox) + relativeBbox).tolist()
+
         if False:
             out =  grab_pyautogui_bbox(bbox)
+        elif False:
+            # if not hasattr(self, 'grabber'): self.grabber = WXGrabber()
+            if not hasattr(self, 'grabber'): self.grabber = Win32Grabber(self._hwnd)
+            out = self.grabber(bbox)
+        elif True:
+            if not hasattr(self, 'grabber'): self.grabber = D3DGrabber()
+            out = self.grabber(bbox)
         else:
-            from PIL import ImageGrab, Image
             out = ImageGrab.grab(bbox, all_screens=True)
-        # print('Grabbed in', time.time() - start, 'sec.')
+            
+        if kind == 'PIL' and not isinstance(out, Image.Image):
+            # TODO: According to the README, d3dshot is even faster if you use numpy output (which we do, but then we convert to PIL image here). Try using an all-ndarray pipeline if possible.
+            out = Image.fromarray(out)
+        elif kind == 'ndarray' and not isinstance(out, np.ndarray):
+            out = np.array(out)
         return out
 
     # Not sure what the rest of this is for.
@@ -203,7 +294,7 @@ class GtaWindow(Window):
         print('Window size:', self.window_size)
 
         # Make second number bigger if we tend to go into the right shoulder.
-        self.car_origin = self.wscale(45, 48)
+        self.car_origin = self.wscale(45, 46.5)
         self.car_origin_minimap = self.wscale(100, 110)
         self.last_cycle_time = time.time()
 
@@ -262,12 +353,15 @@ class GtaWindow(Window):
     def track_mask(self):
         return self.get_track_mask()
 
-    def get_track_mask(self, basemap_kind='micromap', do_erode=True):
+    def get_track_mask(self, basemap_kind='micromap', do_erode=True, filters_present=['all']):
+        t1 = time.time()
         if basemap_kind == 'micromap':
             basemap = np.array(self.micromap)
         else:
             assert basemap_kind == 'minimap'
             basemap = np.array(self.minimap)
+        t2 = time.time()
+        print('dt_ssht=%.4f' % (t2 - t1,), end=' ')
         # hsv = cv2.cvtColor(basemap, cv2.COLOR_RGB2HSV)
         # r = basemap[..., 0]
         # g = basemap[..., 1]
@@ -287,14 +381,28 @@ class GtaWindow(Window):
             upper = np.array([r+5, g+5, b+5])
             return cv2.inRange(basemap, lower, upper)
 
-        out = OR(
-            # RGB(162, 29, 89, radius=10), # purple waypoint tick
-            RGB(79,5,154),
-            RGB(161,73,239),
-            RGB(168, 84, 243), # magenta line
-            # RGB(240, 200, 90), # yellow line
-            RGB(240,200,80), # Race dots
-        ).astype('uint8')
+        filters = dict(
+            magenta_line=(168, 84, 243),
+            race_dots=(240, 200, 80),
+            purple_cross=(161, 73, 239),
+            bluish=(79, 5, 154),
+        )
+
+        if 'all' in filters_present:
+            filters_present = filters.keys()
+
+        out = []
+        for filter in filters_present:
+            out.append(RGB(*filters[filter]))
+
+        out = OR(*out).astype('uint8')
+        #     # RGB(162, 29, 89, radius=10), # purple waypoint tick
+        #     RGB(79,5,154),
+        #     RGB(161,73,239),
+        #     RGB(168, 84, 243), # magenta line
+        #     # RGB(240, 200, 90), # yellow line
+        #     RGB(240,200,80), # Race dots
+        # ).astype('uint8')
 
         if do_erode:
             out = cv2.erode(out, np.ones((3, 3)))

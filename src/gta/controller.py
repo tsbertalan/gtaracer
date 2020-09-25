@@ -373,16 +373,19 @@ def main():
             controller.step()
             
         except BaseException as e:
+            
             if isinstance(e, KeyboardInterrupt):
                 logger.info('User interrupted.')
                 break
+
             else:
                 logger.warning('Stopping:', e)
-                controller.stop()
-                controller.plot(save=args.save_plot)
-                if args.show_plot:
-                    plt.show()
-                raise e
+                if args.show_plot or args.save_plot:
+                    controller.stop()
+                    controller.plot(save=args.save_plot)
+                    if args.show_plot:
+                        plt.show()
+                break
    
 
 if __name__ == '__main__':
