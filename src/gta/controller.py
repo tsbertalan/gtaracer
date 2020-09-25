@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 import numpy as np
 from simple_pid import PID
 from tqdm import tqdm
@@ -26,12 +28,14 @@ class PointsError(ValueError):
 
 class Controller:
 
-    def __init__(self, throttle=None, steer_limit=0.5, kp=.1, ki=0.02, kd=0.05, pretuned=None, error_kind='cte', draw_on_basemap=False):
+    def __init__(self, throttle=None, minimum_throttle=None, steer_limit=0.5, kp=.1, ki=0.02, kd=0.05, 
+        pretuned=None, error_kind='cte', draw_on_basemap=False):
         self.error_kind = error_kind
         print('Using', error_kind, 'error.')
         steer_limit = abs(steer_limit)
         self.gameWindow = gta.recording.vision.GtaWindow()
         self.draw_on_basemap = draw_on_basemap
+        self._too_few_points_maxiter = 1000
 
         # grab = np.array(gta.recording.vision.win32_grab2(self.gameWindow._hwnd, self.gameWindow.getBbox()))
         # print(grab.dtype)
@@ -44,13 +48,37 @@ class Controller:
         self.offset_weight = .5
         if pretuned is not None:
             print('Using', pretuned, 'PID pretuning.')
-            kp, ki, kd = dict(car=(.1, .02, .05), race=(.6, .05, .01), boatrace=(1.6, .06, .005), boat=(.8, 0.02, 0), sailboat=(.9, .05, 0))[pretuned]
+            # # no anti-deadzone
+            # kp, ki, kd = dict(car=(.1, .02, .05), slowcarrace=(1.5, .1, .01), race=(.8, .1, .01), rcrace=(.8, .05, .01), boatrace=(1.6, .06, .005), boat=(.8, 0.02, 0), sailboat=(.9, .05, 0))[pretuned]
+            # with 23% anti-deadzone
+            kp, ki, kd = dict(car=(.1, .01, .02), slowcarrace=(1.5, .1, .01), race=(.8, .1, .01), rcrace=(.8, .05, .01), boatrace=(1.6, .06, .005), boat=(.8, 0.02, 0), sailboat=(.9, .05, 0))[pretuned]
+            self.filters_present = dict(
+                car=['all'],
+                race=['all'],
+                slowcarrace=['all'],
+                rcrace=['all'],
+                boatrace=['all'],
+                boat=['purple_cross'],
+                sailboat=['purple_cross'],
+            )[pretuned]
+        else:
+            self.filters_present = ['all']
+            
         self.pid = PID(kp, ki, kd, setpoint=0)
         self.pid.proportional_on_measurement = False
+        self.steer_limit = steer_limit
         self.pid.output_limits = (-steer_limit, steer_limit)
         self.gpad = gta.gameInputs.gamepad.Gamepad()
-        self.throttle = 0.38 if throttle is None else throttle
-        self.throttle_fuzz = .01
+
+        self.throttle_nominal = 0.38 if throttle is None else throttle
+        if minimum_throttle is None:
+            if pretuned == 'sailboat':
+                minimum_throttle = .6
+            else:
+                minimum_throttle = .4
+        self.minimum_throttle = min(self.throttle_nominal, minimum_throttle)
+        self.throttle_fuzz = 0
+
         self.brake = .0
         self.last_cycle_time = time.time()
         self._n_too_few = 0
@@ -59,6 +87,7 @@ class Controller:
         self.cte_history = []
         self.control_history = []
         self._last_good_error = 0
+        self._last_steering = 0
 
     def get_error(self):
         if self.error_kind == 'cte':
@@ -71,9 +100,8 @@ class Controller:
             self._last_good_error = out
             return out
 
-
     def get_heading_error(self):
-        tm, basemap = self.gameWindow.get_track_mask(basemap_kind='minimap', do_erode=False)
+        tm, basemap = self.gameWindow.get_track_mask(basemap_kind='minimap', do_erode=False, filters_present=self.filters_present)
         tm = np.array(tm)
 
         rows, cols = tm.shape[:2]
@@ -104,7 +132,12 @@ class Controller:
             if x0 > x1:
                 x0,y0,x1,y1 = x1,y1,x0,y0
 
-            slope = (y1 - y0) / (x1 - x0)
+            dx = (x1 - x0)
+            dy = (y1 - y0)
+
+            slope = dy / dx
+
+            self.squared_distance_to_waypoint = np.sqrt(dx ** 2 + dy ** 2)
 
             self.dot(display, [x0, y0])
             self.dot(display, [x1, y1], color=(255, 0, 0))
@@ -123,7 +156,7 @@ class Controller:
 
         if points.size < 1:
             self._n_too_few += 1
-            if self._n_too_few > 20:
+            if self._n_too_few > self._too_few_points_maxiter:
                 raise StopIteration
             else:
                 raise PointsError('Too few points!')
@@ -147,7 +180,7 @@ class Controller:
         points = np.argwhere(tm)
         if len(points) < 10:
             self._n_too_few += 1
-            if self._n_too_few > 20:
+            if self._n_too_few > self._too_few_points_maxiter:
                 raise StopIteration
             else:
                 raise PointsError('Too few points!')
@@ -225,9 +258,30 @@ class Controller:
             ct = self.pid._last_output
         return 0 if ct is None else ct
 
+    def compute_throttle(self):
+        x1 = self.steer_limit
+        y1 = self.minimum_throttle
+
+        x2 = 0
+        y2 = self.throttle_nominal
+
+        slope = (y2 - y1) / (x2 - x1)
+
+        x = abs(self._last_steering)
+        y = (x - x2) * slope + y2
+
+        # if hasattr(self, 'squared_distance_to_waypoint'):
+        #     print(self.squared_distance_to_waypoint)
+
+        if self.throttle_fuzz == 0:
+            return y
+        else:
+            return float(np.random.normal(loc=y, scale=self.throttle_fuzz))
+
     def step(self):
-        steer = self.compute_control()
-        throttle = float(np.random.normal(loc=self.throttle, scale=self.throttle_fuzz))
+        self._last_steering = steer = self.compute_control()
+        throttle = self.compute_throttle()
+        print('thr=%.2f' % throttle, end=',')
         applied = self.gpad(steer=steer, accel=throttle, decel=self.brake)
         steer = applied[0]
 
@@ -283,6 +337,7 @@ def main():
     from argparse import ArgumentParser
     parser = ArgumentParser()
     parser.add_argument('--throttle', type=float, default=None)
+    parser.add_argument('--minimum_throttle', type=float, default=None)
     parser.add_argument('--show_plot', action='store_true', default=False)
     parser.add_argument('--save_plot', action='store_true', default=False)
     parser.add_argument('--mode', type=str, default='car')
@@ -295,11 +350,12 @@ def main():
     args = parser.parse_args()
 
     # For debugging:
-    # args.mode = 'boat'
+    # args.mode = 'boatrace'
 
     car = args.mode.lower() == 'car'
     race = args.mode.lower() == 'race'
-    if args.throttle is None: args.throttle = .38 if (car or race) else 1.0
+    boatrace = args.mode.lower() == 'boatrace'
+    if args.throttle is None: args.throttle = .38 if (car or race) else 0.6 if boatrace else 1.0
     if args.error_kind is None: args.error_kind = 'cte' if car else 'heading'
     if args.steer_limit is None: args.steer_limit = .5 if (car or race) else 1.0
     if args.pid_tuning is None: args.pid_tuning = args.mode.lower()
@@ -308,19 +364,25 @@ def main():
         throttle=args.throttle, error_kind=args.error_kind, 
         # kp=args.kp, ki=args.ki, kd=args.kd,
         pretuned=args.pid_tuning,
-        steer_limit=args.steer_limit
+        steer_limit=args.steer_limit,
+        minimum_throttle=args.minimum_throttle
     )
 
     while True:
         try:
             controller.step()
+            
         except BaseException as e:
-            logger.warn('Stopping:', e)
-            controller.stop()
-            controller.plot(save=args.save_plot)
-            if args.show_plot:
-                plt.show()
-            raise e
+            if isinstance(e, KeyboardInterrupt):
+                logger.info('User interrupted.')
+                break
+            else:
+                logger.warning('Stopping:', e)
+                controller.stop()
+                controller.plot(save=args.save_plot)
+                if args.show_plot:
+                    plt.show()
+                raise e
    
 
 if __name__ == '__main__':
