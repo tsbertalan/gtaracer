@@ -22,7 +22,7 @@ import gta.gameInputs.gamepad
 from PIL import Image
 import cv2
 
-DEFAULT_CAR_THROTTLE = 0.42
+DEFAULT_CAR_THROTTLE = 0.4
 
 class PointsError(ValueError):
     pass
@@ -44,7 +44,15 @@ class Controller:
         self.offset_weight = .5
         if pretuned is not None:
             print('Using', pretuned, 'PID pretuning.')
-            kp, ki, kd = dict(car=(.1, .02, .02), slowcarrace=(1.5, .1, .01), race=(.8, .1, .01), rcrace=(.8, .05, .01), boatrace=(1.6, .06, .005), boat=(.8, 0.02, 0), sailboat=(.9, .05, 0))[pretuned]
+            kp, ki, kd = dict(
+                car=(.22, .03, .1), 
+                slowcarrace=(1.5, .1, .01), 
+                race=(.8, .1, .01), 
+                rcrace=(.8, .05, .01), 
+                boatrace=(1.6, .06, .005),
+                boat=(.8, 0.02, 0), 
+                sailboat=(.9, .05, 0)
+            )[pretuned]
             self.filters_present = dict(
                 car=['all'],
                 race=['all'],

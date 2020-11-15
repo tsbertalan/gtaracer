@@ -231,6 +231,7 @@ class GtaWindow(Window):
         return self.get_track_mask()
 
     def get_track_mask(self, basemap_kind='micromap', do_erode=True, filters_present=['all']):
+        # TODO: Do perspective transform in here.
         t1 = time.time()
         if basemap_kind == 'micromap':
             basemap = np.array(self.micromap)
@@ -250,8 +251,6 @@ class GtaWindow(Window):
         AND = np.logical_and
         OR = lambda *args: reduce(np.logical_or, args)
 
-        # cv2.imshow('tm', basemap)
-        # cv2.waitKey(0)
 
         def RGB(r, g, b, radius=5):
             lower = np.array([r-5, g-5, b-5])
@@ -260,6 +259,7 @@ class GtaWindow(Window):
 
         filters = dict(
             magenta_line=(168, 84, 243),
+            # yellow_line=(240,200,80),
             race_dots=(240, 200, 80),
             purple_cross=(161, 73, 239),
             bluish=(79, 5, 154),
