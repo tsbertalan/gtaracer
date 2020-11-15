@@ -54,7 +54,7 @@ class Controller:
                 sailboat=(.9, .05, 0)
             )[pretuned]
             self.filters_present = dict(
-                car=['all'],
+                car=['magenta_line'],
                 race=['all'],
                 slowcarrace=['all'],
                 rcrace=['all'],
@@ -64,6 +64,7 @@ class Controller:
             )[pretuned]
         else:
             self.filters_present = ['all']
+            
             
         self.pid = PID(kp, ki, kd, setpoint=0)
         self.pid.proportional_on_measurement = False
@@ -114,8 +115,6 @@ class Controller:
             display = tm
             display = np.copy(display if 'uint' in str(display.dtype) else display.astype('uint8')*255)
             display = np.dstack([display, display, display])
-
-        #display = display + self.gameWindow.minimap
 
         try:
             x0, y0 = self.gameWindow.car_origin_minimap
@@ -175,7 +174,7 @@ class Controller:
                 display[int(r), np.arange(int(cc-radii[1]), int(cc+radii[1]+1)), i] = v
 
     def get_cte(self):
-        tm, basemap = self.gameWindow.track_mask
+        tm, basemap = self.gameWindow.get_track_mask(basemap_kind='micromap', do_erode=False, filters_present=self.filters_present)
         tm = np.array(tm)
         rows, cols = tm.shape[:2]
         points = np.argwhere(tm)
@@ -236,8 +235,6 @@ class Controller:
             print('LEFT', end=' ')
         else:
             print('RIGHT', end=' ')
-        # print('offset=%.2f -> %.2f' % (offset, ow))
-        # print('angle=%.2f -> %.2f' % (angle, aw))
         self.cte_history.append(ow+aw)
         return ow + aw
 
@@ -262,9 +259,6 @@ class Controller:
         x = abs(self._last_steering)
         y = (x - x2) * slope + y2
 
-        # if hasattr(self, 'squared_distance_to_waypoint'):
-        #     print(self.squared_distance_to_waypoint)
-
         if self.throttle_fuzz == 0:
             return y
         else:
@@ -285,7 +279,6 @@ class Controller:
         t = time.time()
         print('dt=%.2f' % (t-self.last_cycle_time))
         self.last_cycle_time = t
-        
         return applied
 
     def stop(self):
@@ -324,20 +317,28 @@ class Controller:
                 ))
 
 
+def make_three_channels(mono, as_Image=True):
+    if isinstance(mono, Image.Image):
+        mono = np.array(mono)
+    out = np.dstack([mono, mono, mono])
+    if as_Image:
+        out = Image.fromarray(out)
+    return out
+
+
+def bool2uint8(arr):
+    return arr.astype('bool').astype('uint8') * 255
 def main():
 
     from argparse import ArgumentParser
     parser = ArgumentParser()
-    parser.add_argument('--throttle', type=float, default=None)
+    parser.add_argument('--throttle', type=float, default=None) # 0.01 for debug else None
     parser.add_argument('--minimum_throttle', type=float, default=None)
     parser.add_argument('--show_plot', action='store_true', default=False)
     parser.add_argument('--save_plot', action='store_true', default=False)
     parser.add_argument('--mode', type=str, default='car')
     parser.add_argument('--error_kind', type=str, default=None)
     parser.add_argument('--steer_limit', type=float, default=None)
-    # parser.add_argument('--kp', type=float, default=0.10)
-    # parser.add_argument('--ki', type=float, default=0.02)
-    # parser.add_argument('--kd', type=float, default=0.05)
     parser.add_argument('--pid_tuning', type=str, default=None)
     args = parser.parse_args()
 
@@ -354,7 +355,6 @@ def main():
 
     controller = Controller(
         throttle=args.throttle, error_kind=args.error_kind, 
-        # kp=args.kp, ki=args.ki, kd=args.kd,
         pretuned=args.pid_tuning,
         steer_limit=args.steer_limit,
         minimum_throttle=args.minimum_throttle
@@ -371,8 +371,10 @@ def main():
                 break
 
             else:
-                logger.warning('Stopping:', e)
-                if args.show_plot or args.save_plot:
+                from traceback import format_exc
+                tb = format_exc()
+                logger.warning('Stopping: %s' % tb)
+                if args.save_plot:
                     controller.stop()
                     controller.plot(save=args.save_plot)
                     if args.show_plot:
