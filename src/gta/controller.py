@@ -46,6 +46,7 @@ class Controller:
             print('PID pretuning:', pretuned)
             kp, ki, kd = dict(
                 car=(.22, .03, .1), 
+                mission=(.22, .03, .1), 
                 slowcarrace=(1.5, .1, .01), 
                 race=(.8, .1, .01), 
                 rcrace=(.8, .05, .01), 
@@ -55,6 +56,7 @@ class Controller:
             )[pretuned]
             self.filters_present = dict(
                 car=['magenta_line'],
+                mission=['yellow_line'],
                 race=['all'],
                 slowcarrace=['all'],
                 rcrace=['all'],
@@ -345,16 +347,18 @@ def main():
     # For debugging:
     # args.mode = 'boatrace'
 
-    car = args.mode.lower() == 'car'
+    car = 'car' in args.mode.lower()
+    mission= 'mission' in args.mode.lower()
     race = args.mode.lower() == 'race'
-    boatrace = args.mode.lower() == 'boatrace'
+    boatrace = 'boatrace' in args.mode.lower()
     if args.throttle is None: args.throttle = DEFAULT_CAR_THROTTLE if (car or race) else 0.6 if boatrace else 1.0
-    if args.error_kind is None: args.error_kind = 'cte' if car else 'heading'
+    if args.error_kind is None: args.error_kind = 'cte' if (car or mission) else 'heading'
     if args.steer_limit is None: args.steer_limit = .5 if (car or race) else 1.0
     if args.pid_tuning is None: args.pid_tuning = args.mode.lower()
-
+    
     controller = Controller(
-        throttle=args.throttle, error_kind=args.error_kind, 
+        throttle=args.throttle, 
+        error_kind=args.error_kind, 
         pretuned=args.pid_tuning,
         steer_limit=args.steer_limit,
         minimum_throttle=args.minimum_throttle

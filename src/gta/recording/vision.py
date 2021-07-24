@@ -257,7 +257,7 @@ class GtaWindow(Window):
 
         filters = dict(
             magenta_line=(168, 84, 243),
-            # yellow_line=(240,200,80),
+            yellow_line=(241, 203, 88),
             race_dots=(240, 200, 80),
             purple_cross=(161, 73, 239),
             bluish=(79, 5, 154),
