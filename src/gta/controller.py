@@ -2,7 +2,6 @@
 
 import numpy as np
 from simple_pid import PID
-from tqdm import tqdm
 import time
 
 import matplotlib.pyplot as plt

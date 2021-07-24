@@ -72,33 +72,19 @@ def grab_pyautogui_bbox(bbox):
     width = from_right - from_left
     height = from_bottom - from_top
     return grab_pyautogui(region=(from_left, from_top, width, height))
-    im = grab_pyautogui()
-    return np.array(im)[from_top:from_bottom, from_left:from_right]
 
 
 class D3DGrabber:
 
     def __init__(self):
-        import d3dshot, wx
-
-        # self.app = wx.App()
-        # self.screen = wx.ScreenDC()
-        # self.screen_size = self.screen.GetSize()
-
+        import d3dshot
         self.d = d3dshot.create(capture_output="numpy")
         self.d.capture()
         time.sleep(4)
 
     def __call__(self, bbox):
-        # if bbox is None:
-        #     bbox = 0, 0, self.screen_size[0], self.screen_size[1]
-
         left, top, right, bot = bbox
-        w = right - left
-        h = bot - top
-
         frame = self.d.get_latest_frame()
-
         out = frame[top:bot, left:right, :]
         return out
 
@@ -155,9 +141,9 @@ class Window:
 
 class GtaWindow(Window):
 
-    def __init__(self, fpath=None):
+    def __init__(self):
         wids = []
-        def saveWid(wid, *args):
+        def saveWid(wid, *unused_args):
             wids.append(wid)
         win32gui.EnumWindows(saveWid, None)
 
