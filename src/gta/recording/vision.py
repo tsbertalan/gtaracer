@@ -71,7 +71,6 @@ def grab_pyautogui_bbox(bbox):
     from_left, from_top, from_right, from_bottom = bbox
     width = from_right - from_left
     height = from_bottom - from_top
-    print(bbox, [width, height])
     return grab_pyautogui(region=(from_left, from_top, width, height))
     im = grab_pyautogui()
     return np.array(im)[from_top:from_bottom, from_left:from_right]
@@ -239,7 +238,6 @@ class GtaWindow(Window):
             assert basemap_kind == 'minimap'
             basemap = np.array(self.minimap)
         t2 = time.time()
-        print('dt_ssht=%.4f' % (t2 - t1,), end=' ')
         # hsv = cv2.cvtColor(basemap, cv2.COLOR_RGB2HSV)
         # r = basemap[..., 0]
         # g = basemap[..., 1]

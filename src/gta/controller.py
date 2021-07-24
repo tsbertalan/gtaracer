@@ -33,7 +33,7 @@ class Controller:
     def __init__(self, throttle=None, minimum_throttle=None, steer_limit=0.5, kp=.1, ki=0.02, kd=0.05, 
         pretuned=None, error_kind='cte', draw_on_basemap=False):
         self.error_kind = error_kind
-        print('Using', error_kind, 'error.')
+        print('Error kind:', error_kind)
         steer_limit = abs(steer_limit)
         self.gameWindow = gta.recording.vision.GtaWindow()
         self.draw_on_basemap = draw_on_basemap
@@ -43,7 +43,7 @@ class Controller:
         self.angle_weight = 4
         self.offset_weight = .5
         if pretuned is not None:
-            print('Using', pretuned, 'PID pretuning.')
+            print('PID pretuning:', pretuned)
             kp, ki, kd = dict(
                 car=(.22, .03, .1), 
                 slowcarrace=(1.5, .1, .01), 
@@ -64,7 +64,9 @@ class Controller:
             )[pretuned]
         else:
             self.filters_present = ['all']
-            
+
+        print('filters_present:', self.filters_present)
+
             
         self.pid = PID(kp, ki, kd, setpoint=0)
         self.pid.proportional_on_measurement = False
@@ -183,6 +185,8 @@ class Controller:
             if self._n_too_few > self._too_few_points_maxiter:
                 raise StopIteration
             else:
+                from warnings import warn
+                warn('Got only %d points.' % len(points))
                 raise PointsError('Too few points!')
         elif len(points) > 2000:
             raise PointsError('Too many points!')
@@ -267,17 +271,13 @@ class Controller:
     def step(self):
         self._last_steering = steer = self.compute_control()
         throttle = self.compute_throttle()
-        print('thr=%.2f' % throttle, end=',')
         applied = self.gpad(steer=steer, accel=throttle, decel=self.brake)
         steer = applied[0]
 
         pom = '(PoM)' if self.pid.proportional_on_measurement else ''
         p,i,d = self.pid.components
         self.control_history.append([p, i, d, steer])
-        print('pid: %.2f%s,%.2f,%.2f' % (p, pom, i, d), end=' ')
-        print('steer: %.2f' % steer, end=' ')
         t = time.time()
-        print('dt=%.2f' % (t-self.last_cycle_time))
         self.last_cycle_time = t
         return applied
 
