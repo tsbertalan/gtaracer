@@ -192,9 +192,11 @@ class Controller:
                 raise PointsError('Too few points!')
         elif len(points) > 2000:
             raise PointsError('Too many points!')
-        coeffs = np.polyfit(*points.T, deg=self.fit_order)
-        poly = np.poly1d(coeffs)
-        slope = poly.deriv()
+
+        else:
+            coeffs = np.polyfit(*points.T, deg=self.fit_order)
+            poly = np.poly1d(coeffs)
+            slope = poly.deriv()
 
         if self.draw_on_basemap:
             display = basemap
@@ -202,13 +204,14 @@ class Controller:
             display = tm.astype('uint8')*255
             rows, cols = display.squeeze().shape
             display = np.dstack([display, display, display])
-            
-        Y = np.arange(self.gameWindow.car_origin[0]).astype(int)
-        X = poly(Y).astype(int)
-        ok = np.logical_and(X>0, X<cols)
-        display[Y[ok], X[ok], 0] = 0
-        display[Y[ok], X[ok], 1] = 255
-        display[Y[ok], X[ok], 2] = 0
+
+        if 'poly' in locals():
+            Y = np.arange(self.gameWindow.car_origin[0]).astype(int)
+            X = poly(Y).astype(int)
+            ok = np.logical_and(X>0, X<cols)
+            display[Y[ok], X[ok], 0] = 0
+            display[Y[ok], X[ok], 1] = 255
+            display[Y[ok], X[ok], 2] = 0
         
         self.dot(display, self.gameWindow.car_origin)
         self.dot(display,
@@ -224,25 +227,19 @@ class Controller:
             # display,
             cv2.resize(display, None, fx=scale, fy=scale)
         )
-        cv2.waitKey(1)  
+        cv2.waitKey(1)
 
-        offset = self.gameWindow.car_origin[1] - poly(self.gameWindow.car_origin[0])
-        angle = np.arctan(slope(self.gameWindow.car_origin[0]+self.slope_vertical_offset))
-        ow = offset * self.offset_weight
-        aw = angle  * self.angle_weight
-        sign = lambda x: x >= 0
-        if sign(ow) == sign(aw):
-            print('AGREE', end=' ')
-        elif abs(ow) > abs(aw):
-            print('OFFSET', end=' ')
+        if 'slope' in locals():
+            offset = self.gameWindow.car_origin[1] - poly(self.gameWindow.car_origin[0])
+            angle = np.arctan(slope(self.gameWindow.car_origin[0]+self.slope_vertical_offset))
+            ow = offset * self.offset_weight
+            aw = angle  * self.angle_weight
+            err = ow + aw
         else:
-            print('ANGLE', end=' ')
-        if ow + aw > 0:
-            print('LEFT', end=' ')
-        else:
-            print('RIGHT', end=' ')
-        self.cte_history.append(ow+aw)
-        return ow + aw
+            err = 0
+
+        self.cte_history.append(err)
+        return err
 
     def compute_control(self):
         try:
