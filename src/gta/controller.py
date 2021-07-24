@@ -37,7 +37,7 @@ class Controller:
         steer_limit = abs(steer_limit)
         self.gameWindow = gta.recording.vision.GtaWindow()
         self.draw_on_basemap = draw_on_basemap
-        self._too_few_points_maxiter = 500
+        self._too_few_points_maxiter = 5000
 
        
         self.angle_weight = 4
@@ -159,9 +159,9 @@ class Controller:
         if points.size < 1:
             self._n_too_few += 1
             if self._n_too_few > self._too_few_points_maxiter:
-                raise StopIteration
+                raise StopIteration('Saw too few points too many times; not continuing controller.')
             else:
-                raise PointsError('Too few points!')
+                raise PointsError('Too few points (try again later).')
         else:
             if target_behind_us:
                 return np.arctan(np.inf)
