@@ -326,6 +326,84 @@ def make_three_channels(mono, as_Image=True):
 
 def bool2uint8(arr):
     return arr.astype('bool').astype('uint8') * 255
+
+class MPController(Controller):
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+
+    def get_cost_map(self, smaller_edge_goal=100, drivable_reward_level=.75, objective_reward_level=1.0):
+        tm, basemap = self.gameWindow.get_track_mask(basemap_kind='micromap', do_erode=False, filters_present=self.filters_present)
+
+        # Scale the image to some small size.
+        smaller_edge_goal = 100
+        smallsize = min(basemap.shape[:2])
+        scale = float(smaller_edge_goal) / smallsize
+        basemap_small = cv2.resize(basemap, None, fx=scale, fy=scale)
+        tm_small = cv2.resize(bool2uint8(tm), None, fx=scale, fy=scale)
+
+        # Take the value channel.
+        base_hsv = cv2.cvtColor(basemap_small, cv2.COLOR_RGB2HSV)
+        value = base_hsv[:, :, 2]
+
+        # Do some adaptive thresholding.
+        from functools import reduce
+        drivable = reduce(np.logical_and, [
+            # base_hsv[:, :, 1] < 100,  # Also only grey parts
+            # value > 100,
+            cv2.threshold(value, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1],
+            value > value.mean(), 
+            cv2.adaptiveThreshold(value, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 165, 8)
+            #cv2.adaptiveThreshold(value, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 165, 8)
+        ])
+
+        # Waypoints
+        objectives = cv2.dilate(tm_small.astype('float32'), np.ones([5,5]), iterations=1).astype('bool')
+
+        # Mix
+        costmap = (
+            # cv2.GaussianBlur(drivable.astype('float32'), (51, 51), cv2.BORDER_CONSTANT) * drivable_reward_level
+            drivable.astype('float32') * drivable_reward_level
+            +
+            objectives.astype('float32') * objective_reward_level
+        )
+
+        # Blur
+        blurred_costmap = cv2.GaussianBlur(costmap, (31, 31), cv2.BORDER_REFLECT)
+
+        cv2.imshow('track_mask', blurred_costmap)
+        cv2.waitKey(1)
+
+        return blurred_costmap
+
+    def compute_control(self):
+        cost_map = self.get_cost_map()
+        
+        display = cost_map
+        display = np.copy(display if 'uint' in str(display.dtype) else display.astype('uint8')*255)
+        display = make_three_channels(display, as_Image=False)
+        # scale = 2.0
+        # cv2.imshow('track_mask', 
+        #     cv2.resize(cv2.cvtColor(display, cv2.COLOR_RGB2BGR), None, fx=scale, fy=scale)
+        # )
+        # cv2.waitKey(1)
+        return 0
+        
+    def step(self):
+        self._last_steering = steer = self.compute_control()
+        throttle = self.compute_throttle()
+        print('thr=%.2f' % throttle, end=',')
+        applied = self.gpad(steer=steer, accel=throttle, decel=self.brake)
+        steer = applied[0]
+
+        self.control_history.append([steer])
+        print('steer: %.2f' % steer, end=' ')
+        t = time.time()
+        print('dt=%.2f' % (t-self.last_cycle_time))
+        self.last_cycle_time = t
+        return applied
+
+
 def main():
 
     from argparse import ArgumentParser
