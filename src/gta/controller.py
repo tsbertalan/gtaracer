@@ -21,7 +21,10 @@ import gta.gameInputs.gamepad
 from PIL import Image
 import cv2
 
-DEFAULT_CAR_THROTTLE = 0.4
+
+DEFAULT_CAR_THROTTLE = 0.32
+DEFAULT_BOAT_THROTTLE = 1.
+
 
 class PointsError(ValueError):
     pass
@@ -142,8 +145,8 @@ class Controller:
 
             self.squared_distance_to_waypoint = np.sqrt(dx ** 2 + dy ** 2)
 
-            self.dot(display, [x0, y0])
-            self.dot(display, [x1, y1], color=(255, 0, 0))
+            self.draw_dot(display, [x0, y0])
+            self.draw_dot(display, [x1, y1], color=(255, 0, 0))
             xl = np.arange(int(x0), int(x1))
             yl = ((xl-x0) * slope + y0).astype('uint16')
             ok = np.logical_and(yl > 0, yl < display.shape[1])
@@ -170,7 +173,7 @@ class Controller:
                 return np.arctan(slope)
 
     @staticmethod
-    def dot(display, location, radii=(1, 1), color=(0, 0, 255)):
+    def draw_dot(display, location, radii=(1, 1), color=(0, 0, 255)):
         cr, cc = np.asarray(location).astype('int')
         for r in range(cr-radii[0], cr+radii[0]+1):
             for i, v in enumerate(color):
@@ -184,7 +187,7 @@ class Controller:
         if len(points) < 10:
             self._n_too_few += 1
             if self._n_too_few > self._too_few_points_maxiter:
-                raise StopIteration
+                raise StopIteration('Saw too few points too many times; not continuing controller.')
             else:
                 from warnings import warn
                 warn('Got only %d points.' % len(points))
@@ -212,8 +215,8 @@ class Controller:
             display[Y[ok], X[ok], 1] = 255
             display[Y[ok], X[ok], 2] = 0
         
-        self.dot(display, self.gameWindow.car_origin)
-        self.dot(display,
+        self.draw_dot(display, self.gameWindow.car_origin)
+        self.draw_dot(display,
             [
                 self.gameWindow.car_origin[0]+self.slope_vertical_offset,
                 self.gameWindow.car_origin[1],
@@ -327,7 +330,8 @@ def make_three_channels(mono, as_Image=True):
 def bool2uint8(arr):
     return arr.astype('bool').astype('uint8') * 255
 
-class MPController(Controller):
+
+class OptimalController(Controller):
 
     def __init__(self, *a, **k):
         super().__init__(*a, **k)
@@ -417,6 +421,7 @@ def main():
     parser.add_argument('--steer_limit', type=float, default=None)
     parser.add_argument('--pid_tuning', type=str, default=None)
     args = parser.parse_args()
+    print('Got args:', args)
 
     # For debugging:
     # args.mode = 'boatrace'
@@ -425,7 +430,7 @@ def main():
     mission= 'mission' in args.mode.lower()
     race = args.mode.lower() == 'race'
     boatrace = 'boatrace' in args.mode.lower()
-    if args.throttle is None: args.throttle = DEFAULT_CAR_THROTTLE if (car or race) else 0.6 if boatrace else 1.0
+    if args.throttle is None: args.throttle = DEFAULT_CAR_THROTTLE if (car or race) else DEFAULT_BOAT_THROTTLE if boatrace else 1.0
     if args.error_kind is None: args.error_kind = 'cte' if (car or mission) else 'heading'
     if args.steer_limit is None: args.steer_limit = .5 if (car or race) else 1.0
     if args.pid_tuning is None: args.pid_tuning = args.mode.lower()
@@ -446,13 +451,19 @@ def main():
 
             if isinstance(e, KeyboardInterrupt):
                 logger.info('User interrupted.')
+                print('User interrupted.', args.show_plot)
+                if args.save_plot or args.show_plot:
+                    controller.stop()
+                    controller.plot(save=args.save_plot)
+                    if args.show_plot:
+                        plt.show()
                 break
 
             else:
                 from traceback import format_exc
                 tb = format_exc()
                 logger.warning('Stopping: %s' % tb)
-                if args.save_plot:
+                if args.save_plot or args.show_plot:
                     controller.stop()
                     controller.plot(save=args.save_plot)
                     if args.show_plot:
