@@ -48,7 +48,8 @@ class Controller:
             print('PID pretuning:', pretuned)
             kp, ki, kd = dict(
                 car=(.22, .03, .1), 
-                mission=(.22, .03, .1), 
+                mission=(.22, .03, .01), 
+                carmission=(.22, .03, .01),
                 slowcarrace=(1.5, .1, .01), 
                 race=(.8, .1, .01), 
                 rcrace=(.8, .05, .01), 
@@ -58,7 +59,8 @@ class Controller:
             )[pretuned]
             self.filters_present = dict(
                 car=['magenta_line'],
-                mission=['yellow_line'],
+                mission=['yellow_line', 'green_line'],
+                carmission=['magenta_line', 'yellow_line', 'green_line'],
                 race=['all'],
                 slowcarrace=['all'],
                 rcrace=['all'],
@@ -72,6 +74,7 @@ class Controller:
         print('filters_present:', self.filters_present)
 
             
+        print('PID: kp={}, ki={}, kd={}'.format(kp, ki, kd))
         self.pid = PID(kp, ki, kd, setpoint=0)
         self.pid.proportional_on_measurement = False
         self.steer_limit = steer_limit
@@ -416,7 +419,7 @@ def main():
     parser.add_argument('--minimum_throttle', type=float, default=None)
     parser.add_argument('--show_plot', action='store_true', default=False)
     parser.add_argument('--save_plot', action='store_true', default=False)
-    parser.add_argument('--mode', type=str, default='car')
+    parser.add_argument('--mode', type=str, default='carmission')
     parser.add_argument('--error_kind', type=str, default=None)
     parser.add_argument('--steer_limit', type=float, default=None)
     parser.add_argument('--pid_tuning', type=str, default=None)
@@ -427,10 +430,13 @@ def main():
     # args.mode = 'boatrace'
 
     car = 'car' in args.mode.lower()
+    boat = 'boat' in args.mode.lower()
     mission= 'mission' in args.mode.lower()
     race = args.mode.lower() == 'race'
-    boatrace = 'boatrace' in args.mode.lower()
-    if args.throttle is None: args.throttle = DEFAULT_CAR_THROTTLE if (car or race) else DEFAULT_BOAT_THROTTLE if boatrace else 1.0
+    boatrace = boat and race
+    if args.throttle is None:
+        args.throttle = DEFAULT_CAR_THROTTLE if (car or race) else DEFAULT_BOAT_THROTTLE if boat else min(DEFAULT_BOAT_THROTTLE, DEFAULT_CAR_THROTTLE, .4)
+        print('args.throttle:', args.throttle)
     if args.error_kind is None: args.error_kind = 'cte' if (car or mission) else 'heading'
     if args.steer_limit is None: args.steer_limit = .5 if (car or race) else 1.0
     if args.pid_tuning is None: args.pid_tuning = args.mode.lower()
