@@ -1,8 +1,10 @@
 #!/usr/bin/env python
 
+from sys import stdout
 import time
 import gta.gameInputs.gamepad
 import msvcrt
+
 
 if __name__ == '__main__':
     gpad = gta.gameInputs.gamepad.Gamepad()
@@ -40,6 +42,17 @@ if __name__ == '__main__':
         time.sleep(turn_time)
         gpad(walkturn=0)
 
+    def accel():
+        gpad(accel=1)
+        time.sleep(turn_time)
+        gpad(accel=0)
+
+    def decel():
+        gpad(decel=1)
+        time.sleep(turn_time)
+        gpad(decel=0)
+
+
     print('''
     W: forward
     S: backward
@@ -47,6 +60,8 @@ if __name__ == '__main__':
     D: right strafe
     Q: left turn
     E: right turn
+    F: accel
+    R: decel
     Other keys: quit
     ''')
 
@@ -68,6 +83,12 @@ if __name__ == '__main__':
             leftTurn()
         elif key == 'e':
             rightTurn()
+        elif key == 'f':
+            accel()
+        elif key == 'r':
+            decel()
         else:
             print('unknown key:', key, '; quit.')
             break
+        print('.', end='')
+        stdout.flush()
