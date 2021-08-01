@@ -10,6 +10,7 @@ if __name__ == '__main__':
     gpad = gta.gameInputs.gamepad.Gamepad()
 
     walk_time = 1.0
+    drive_time = 1.2
     turn_time = 0.1
 
     def forward():
@@ -44,12 +45,12 @@ if __name__ == '__main__':
 
     def accel():
         gpad(accel=1)
-        time.sleep(turn_time)
+        time.sleep(drive_time)
         gpad(accel=0)
 
     def decel():
         gpad(decel=1)
-        time.sleep(turn_time)
+        time.sleep(drive_time)
         gpad(decel=0)
 
 
@@ -88,7 +89,7 @@ if __name__ == '__main__':
         elif key == 'r':
             decel()
         else:
-            print('unknown key:', key, '; quit.')
+            print('quit')
             break
         print('.', end='')
         stdout.flush()
