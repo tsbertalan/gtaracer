@@ -23,6 +23,7 @@ import cv2
 
 
 DEFAULT_CAR_THROTTLE = 0.32
+DEFAULT_TRUCK_THROTTLE = 0.4
 DEFAULT_BOAT_THROTTLE = 1.
 
 
@@ -48,6 +49,7 @@ class Controller:
             print('PID pretuning:', pretuned)
             kp, ki, kd = dict(
                 car=(.22, .03, .1), 
+                heavy=(.3, .03, .1),
                 mission=(.22, .03, .01), 
                 carmission=(.22, .03, .01),
                 slowcarrace=(1.5, .1, .01), 
@@ -61,6 +63,7 @@ class Controller:
                 car=['magenta_line'],
                 mission=['yellow_line', 'green_line'],
                 carmission=['magenta_line', 'yellow_line', 'green_line'],
+                heavy=['magenta_line', 'yellow_line', 'green_line'],
                 race=['all'],
                 slowcarrace=['all'],
                 rcrace=['all'],
@@ -430,16 +433,23 @@ def main():
     # args.mode = 'boatrace'
 
     car = 'car' in args.mode.lower()
+    truck = 'truck' in args.mode.lower()
+    wheeled = car or truck
     boat = 'boat' in args.mode.lower()
     mission= 'mission' in args.mode.lower()
     race = args.mode.lower() == 'race'
     boatrace = boat and race
     if args.throttle is None:
-        args.throttle = DEFAULT_CAR_THROTTLE if (car or race) else DEFAULT_BOAT_THROTTLE if boat else min(DEFAULT_BOAT_THROTTLE, DEFAULT_CAR_THROTTLE, .4)
+        args.throttle = (
+            DEFAULT_TRUCK_THROTTLE if truck
+            else DEFAULT_CAR_THROTTLE if (car or race) 
+            else DEFAULT_BOAT_THROTTLE if boat 
+            else min(DEFAULT_BOAT_THROTTLE, DEFAULT_CAR_THROTTLE, .4))
         print('args.throttle:', args.throttle)
     if args.error_kind is None: args.error_kind = 'cte' if (car or mission) else 'heading'
     if args.steer_limit is None: args.steer_limit = .5 if (car or race) else 1.0
-    if args.pid_tuning is None: args.pid_tuning = args.mode.lower()
+    if args.pid_tuning is None:
+        args.pid_tuning = 'heavy' if truck else args.mode.lower()
     
     controller = Controller(
         throttle=args.throttle, 
