@@ -93,17 +93,22 @@ class Gamepad:
 
         # X360ce should have
         #     Left Trigger set to "Axis 2",
-        #     Right Trigger set to "Axis 3", and
-        #     Left Stick X set to "Axis 1".
+        #     Right Trigger set to "Axis 3", 
+        #     Left Stick X set to "Axis 1",
+        #     Left Stick Y set to "Axis 4",
+        #     and
+        #     Right Stick X set to "HSlider1" (requires usin the script axis_recording.py, I think).
 
         using_x360ce = True
         if using_x360ce:
-            axis_codes = 'wAxisX', 'wAxisY', 'wAxisZ'
+            axis_codes = 'wAxisX', 'wAxisY', 'wAxisZ', 'wAxisXRot', 'wSlider',
         
         self._axes = [
             Axis(axis_codes[0], neutral=None, nominal_range=(-1, 1), purpose='steer', common_axis_name='Left Stick X',  input_clamp=[-1, 1], deadzone=self.steering_dead_zone),
             Axis(axis_codes[1], neutral=6000, nominal_range=(0, 1),  purpose='decel', common_axis_name='Left Trigger',  input_clamp=[0, 1]),
             Axis(axis_codes[2], neutral=6000, nominal_range=(0, 1),  purpose='accel', common_axis_name='Right Trigger', input_clamp=[0, 1]),
+            Axis(axis_codes[3], neutral=None, nominal_range=(-1, 1), purpose='walk',  common_axis_name='Left Stick Y',  input_clamp=[-1, 1], deadzone=self.steering_dead_zone),
+            Axis(axis_codes[4], neutral=None, nominal_range=(-1, 1), purpose='walkturn',  common_axis_name='Right Stick X',  input_clamp=[-1, 1], deadzone=self.steering_dead_zone),
         ]
         for ax in self._axes:
             setattr(self, ax.purpose, ax)
@@ -140,9 +145,9 @@ class Gamepad:
     #     #     if ax.purpose == purpose:
     #     #         return ax
         
-    def __call__(self, steer=None, decel=None, accel=None):
+    def __call__(self, steer=None, decel=None, accel=None, walk=None, walkturn=None):
         values = []
-        for ax, val in zip(self._axes, [steer, decel, accel]):
+        for ax, val in zip(self._axes, [steer, decel, accel, walk, walkturn]):
             values.append(
                 ax.deadzone_filter(val) if val is not None
                 else ax.last_input
