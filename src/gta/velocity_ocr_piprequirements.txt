@@ -1,0 +1,7 @@
+numpy
+pillow
+pytesseract
+tqdm
+scikit-image
+scikit-learn
+scipy
