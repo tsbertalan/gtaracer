@@ -13,16 +13,24 @@ if __name__ == '__main__':
     drive_time = 1.2
     turn_time = 0.1
 
+
     def forward():
-        gpad(walk=1)
-        time.sleep(walk_time)
-        gpad(walk=0)
+        if not forward.current_walk_speed == 1:
+            gpad(walk=1)
+            forward.current_walk_speed = 1
+        else:
+            gpad(walk=0)
+            forward.current_walk_speed = 0
+    forward.current_walk_speed = 0
 
     def backward():
-        gpad(walk=-1)
-        time.sleep(walk_time)
-        gpad(walk=0)
-
+        if not forward.current_walk_speed == -1:
+            gpad(walk=-1)
+            forward.current_walk_speed = -1
+        else:
+            gpad(walk=0)
+            forward.current_walk_speed = 0
+            
     def leftStrafe():
         gpad(steer=-1)
         time.sleep(walk_time)
@@ -34,7 +42,7 @@ if __name__ == '__main__':
         gpad(steer=0)
 
     def leftTurn():
-        gpad(walkturn=-1)
+        gpad(walkturn=-1)   
         time.sleep(turn_time)
         gpad(walkturn=0)
 
@@ -43,15 +51,24 @@ if __name__ == '__main__':
         time.sleep(turn_time)
         gpad(walkturn=0)
 
+    max_drive_speed = .5
+
     def accel():
-        gpad(accel=1)
-        time.sleep(drive_time)
-        gpad(accel=0)
+        if not accel.current_drive_speed == max_drive_speed:
+            gpad(accel=max_drive_speed, decel=0)
+            accel.current_drive_speed = max_drive_speed
+        else:
+            gpad(accel=0, decel=0)
+            accel.current_drive_speed = 0
+    accel.current_drive_speed = 0
 
     def decel():
-        gpad(decel=1)
-        time.sleep(drive_time)
-        gpad(decel=0)
+        if not accel.current_drive_speed == -max_drive_speed:
+            gpad(accel=0, decel=max_drive_speed)
+            accel.current_drive_speed = -max_drive_speed
+        else:
+            gpad(accel=0, decel=0)
+            accel.current_drive_speed = 0
 
 
     print('''
