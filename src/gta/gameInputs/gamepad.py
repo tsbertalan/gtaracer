@@ -121,7 +121,11 @@ class Gamepad:
             Button(5, 'lb', self.vj),
             Button(6, 'rb', self.vj),
             Button(7, 'start', self.vj),
+            Button(8, 'back', self.vj),
         ]
+
+        self.named_buttons = {b.name: b for b in self._buttons}
+
         for button in self._buttons:
             setattr(self, button.name, button)
 

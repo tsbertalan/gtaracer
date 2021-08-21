@@ -29,7 +29,7 @@ class BaseRecorder(object):
 
     def __init__(self, 
         period, 
-        Task=BaseTask, waitPeriod=1, giveQueueDirectly=False, 
+        Task=BaseTask, waitPeriod=1, giveQueueDirectly=False,
         **taskKwargs
         ):
         """
@@ -51,18 +51,24 @@ class BaseRecorder(object):
         """
 
         self.Task = Task
+
         self.taskKwargs = taskKwargs
+        self.period = period
+        self.waitPeriod = waitPeriod
+        self.giveQueueDirectly = giveQueueDirectly
+
+    def create_subprocesses(self):
         self.manager = Manager()
         self.workSignal = self.manager.Event()
         self.resultsQueue = self.manager.Queue()
         self._resultsList = []
         
-        if Task is not None:
-            passed = {'waitPeriod': waitPeriod}
-            passed.update(taskKwargs)
-            if giveQueueDirectly:
+        if self.Task is not None:
+            passed = {'waitPeriod': self.waitPeriod}
+            passed.update(self.taskKwargs)
+            if self.giveQueueDirectly:
                 passed['resultsQueue'] = self.resultsQueue
-            self.workerArgs = (Task, self.workSignal, self.resultsQueue, period)
+            self.workerArgs = (self.Task, self.workSignal, self.resultsQueue, self.period)
             self.worker = Process(
                 target=work, 
                 args=self.workerArgs,
@@ -85,7 +91,10 @@ class BaseRecorder(object):
 
     @property
     def results(self):
-        return np.stack([r for (t, r) in self.resultsList])
+        if len(self.resultsList) > 0:
+            return np.stack([r for (t, r) in self.resultsList])
+        else:
+            return np.array([])
 
     @property
     def times(self):
@@ -111,7 +120,7 @@ class BaseRecorder(object):
         gta.utils.mkdir_p(dirname)
         print('Saving to %s ... ' % fpath, end='')
         toSave = self.toSave(**kwargs)
-        saver(fpath, **toSave)
+        saver(fpath, dtype=object, **toSave)
         print('done (%.3g s).' % (time.time() - start,))
         return toSave
 

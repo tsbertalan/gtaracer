@@ -10,13 +10,18 @@ from gta.recording import BaseRecorder
 class UnifiedRecorder(BaseRecorder):
 
     def __init__(self, visionPeriod=.01, gamepadPeriod=.01, includeKeyboard=True):
-        self.xrecorder = gta.recording.vision.VisionRecorder(period=visionPeriod)
-        self.yrecorders = [gta.recording.gamepad.GamepadRecorder(period=gamepadPeriod)]
+        super().__init__(period=min(visionPeriod, gamepadPeriod), Task=None)
+        self.xrecorder = gta.recording.vision.VisionRecorder(period=visionPeriod)#, manager=self.manager)
+        self.yrecorders = [gta.recording.gamepad.GamepadRecorder(period=gamepadPeriod)]#, manager=self.manager)]
         if includeKeyboard:
-            self.yrecorders.append(gta.recording.keyboard.KeyboardRecorder())
+            self.yrecorders.append(gta.recording.keyboard.KeyboardRecorder())#manager=self.manager))
         self.includeKeyboard = includeKeyboard
         self.recorders = list(self.yrecorders)
         self.recorders.append(self.xrecorder)
+        
+    def create_subprocesses(self):
+        for recorder in self.recorders:
+            recorder.create_subprocesses()
 
     @property
     def resultsList(self):
@@ -40,11 +45,11 @@ class UnifiedRecorder(BaseRecorder):
 
     def YT(self):
         if len(self.yrecorders) > 1:
-            times = np.hstack([recorder.times for recorder in self.yrecorders])
-            results = np.vstack([recorder.results for recorder in self.yrecorders])
-            order = np.argsort(times)
-            times = times[order]
-            results = results[order]
+            times = [recorder.times for recorder in self.yrecorders]
+            results = [recorder.results for recorder in self.yrecorders]    
+            orders = [np.argsort(t) for t in times]
+            times = [t[order] for (t, order) in zip(times, orders)]
+            results = [r[order] for (r, order) in zip(results, orders)]
         else:
             results = self.yrecorders[0].results
             times = self.yrecorders[0].times
@@ -53,7 +58,13 @@ class UnifiedRecorder(BaseRecorder):
     def XT(self):
         return self.xrecorder.results, self.xrecorder.times
 
-    def XYT(self, sparse=False, stripKeyboardPartIfExcluded=True):
+    def XTYT(self, sparse=False, stripKeyboardPartIfExcluded=True):
+
+        X = list(self.xrecorder.resultsList)
+        Y = [list(recorder.resultsList) for recorder in self.yrecorders]
+
+        return X, Y
+        
 
         start = time.time()
 
@@ -107,5 +118,5 @@ class UnifiedRecorder(BaseRecorder):
         return X, YatX, Tx
 
     def toSave(self):
-        X, Y, T = self.XYT()
-        return dict(X=X, Y=Y, T=T)
+        X, Y = self.XTYT()
+        return dict(X=X, Y=Y)

@@ -7,9 +7,12 @@ import time
 import matplotlib.pyplot as plt
 
 import logging
-logging.basicConfig()
-logger = logging.Logger('controller')
-logger.setLevel(logging.INFO)
+
+logformat = '%(asctime)s %(levelname)-8s [%(filename)s:%(lineno)d] %(message)s'
+datefmt = '%H:%M:%S'
+logging.basicConfig(format=logformat, datefmt=datefmt, level=logging.INFO)
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 from sys import path
 from os.path import join, expanduser
@@ -17,38 +20,43 @@ path.append(join(expanduser('~'), 'Dropbox', 'Projects', 'GTARacer', 'src'))
 
 import gta.recording.vision
 import gta.gameInputs.gamepad
+from gta.random_destinations import change_gps
 
 from PIL import Image
 import cv2
-
-
-DEFAULT_CAR_THROTTLE = 0.32
-DEFAULT_TRUCK_THROTTLE = 0.4
-DEFAULT_BOAT_THROTTLE = 1.
 
 
 class PointsError(ValueError):
     pass
 
 
-class Controller:
+class IOController:
 
     def __init__(self, throttle=None, minimum_throttle=None, steer_limit=0.5, kp=.1, ki=0.02, kd=0.05, 
-        pretuned=None, error_kind='cte', draw_on_basemap=False):
+        pretuned='car', filters_present='carmission', error_kind='cte', draw_on_basemap=False):
         self.error_kind = error_kind
-        print('Error kind:', error_kind)
+        if error_kind == 'cte':
+            self._too_few_points_minpoints = 1
+        else:
+            self._too_few_points_minpoints = 10
+        logger.info('Error kind: {}'.format(error_kind))
         steer_limit = abs(steer_limit)
         self.gameWindow = gta.recording.vision.GtaWindow()
         self.draw_on_basemap = draw_on_basemap
-        self._too_few_points_maxiter = 5000
+        self._too_few_points_maxiter = 2500
+        self.n_randomizations = 0
+        self.last_randomization = time.time()
+        self.min_randomize_interval = 10.
+        self._max_randomizations = 5
 
        
         self.angle_weight = 4
         self.offset_weight = .5
         if pretuned is not None:
-            print('PID pretuning:', pretuned)
+            logger.info('PID pretuning: {}'.format(pretuned))
             kp, ki, kd = dict(
                 car=(.22, .03, .1), 
+                chase=(.18, .005, .35), 
                 heavy=(.3, .03, .1),
                 mission=(.22, .03, .01), 
                 carmission=(.22, .03, .01),
@@ -59,25 +67,39 @@ class Controller:
                 boat=(.8, 0.02, 0), 
                 sailboat=(.9, .05, 0)
             )[pretuned]
-            self.filters_present = dict(
+
+        if filters_present is not None:
+            filter_options = dict(
                 car=['magenta_line'],
-                mission=['yellow_line', 'green_line'],
-                carmission=['magenta_line', 'yellow_line', 'green_line'],
-                heavy=['magenta_line', 'yellow_line', 'green_line'],
+                mission=['yellow_line', 'green_line', 'sky_line'],
+                carmission=['magenta_line', 'yellow_line', 'green_line', 'sky_line'],
                 race=['all'],
                 slowcarrace=['all'],
                 rcrace=['all'],
                 boatrace=['all'],
                 boat=['purple_cross'],
                 sailboat=['purple_cross'],
-            )[pretuned]
-        else:
+            )
+            self.filters_present = set()
+            if 'car' in filters_present:
+                self.filters_present.update(filter_options['car'])
+            if 'mission' in filters_present:
+                self.filters_present.update(filter_options['mission'])
+            if 'race' in filters_present or 'slowcarrace' in filters_present or 'rcrace' in filters_present:
+                self.filters_present.add('all')
+            if 'boat' in filters_present:
+                self.filters_present.add('purple_cross')
+                
+        if len(self.filters_present) == 0:
             self.filters_present = ['all']
+        else:
+            self.filters_present = list(self.filters_present)
 
-        print('filters_present:', self.filters_present)
+        logger.info('filters_present: {}'.format(self.filters_present))
 
-            
-        print('PID: kp={}, ki={}, kd={}'.format(kp, ki, kd))
+        print('Logger level=', logging.getLevelName(logger.getEffectiveLevel()))
+        
+        logger.info('PID: kp={}, ki={}, kd={}'.format(kp, ki, kd))
         self.pid = PID(kp, ki, kd, setpoint=0)
         self.pid.proportional_on_measurement = False
         self.steer_limit = steer_limit
@@ -166,6 +188,7 @@ class Controller:
         )
         cv2.waitKey(1)
 
+        self.last_point_count = points.size
         if points.size < 1:
             self._n_too_few += 1
             if self._n_too_few > self._too_few_points_maxiter:
@@ -177,6 +200,23 @@ class Controller:
                 return np.arctan(np.inf)
             else:
                 return np.arctan(slope)
+    
+    @property
+    def has_few_points(self):
+        if not hasattr(self, 'last_point_count'):
+            return True
+        else:
+            if self.last_point_count < self._too_few_points_minpoints:
+                return True
+            else:
+                return False
+
+    def randomize_gps(self):
+        if time.time() - self.last_randomization > self.min_randomize_interval:
+            logger.info('Randomizing GPS destination')
+            self.last_randomization = time.time()
+            self.n_randomizations += 1
+            change_gps(self.gpad)
 
     @staticmethod
     def draw_dot(display, location, radii=(1, 1), color=(0, 0, 255)):
@@ -190,13 +230,12 @@ class Controller:
         tm = np.array(tm)
         rows, cols = tm.shape[:2]
         points = np.argwhere(tm)
-        if len(points) < 10:
+        self.last_point_count = len(points)
+        if self.has_few_points:
             self._n_too_few += 1
             if self._n_too_few > self._too_few_points_maxiter:
                 raise StopIteration('Saw too few points too many times; not continuing controller.')
             else:
-                from warnings import warn
-                warn('Got only %d points.' % len(points))
                 raise PointsError('Too few points!')
         elif len(points) > 2000:
             raise PointsError('Too many points!')
@@ -254,7 +293,6 @@ class Controller:
             err = self.get_error()
             ct = self.pid(err)
         except PointsError as e:
-            logger.info(str(e))
             ct = self.pid._last_output
         return 0 if ct is None else ct
 
@@ -276,6 +314,7 @@ class Controller:
             return float(np.random.normal(loc=y, scale=self.throttle_fuzz))
 
     def step(self):
+       
         self._last_steering = steer = self.compute_control()
         throttle = self.compute_throttle()
         applied = self.gpad(steer=steer, accel=throttle, decel=self.brake)
@@ -324,6 +363,10 @@ class Controller:
                 ))
 
 
+class RangeHeadingController(IOController):
+    pass
+
+
 def make_three_channels(mono, as_Image=True):
     if isinstance(mono, Image.Image):
         mono = np.array(mono)
@@ -337,7 +380,7 @@ def bool2uint8(arr):
     return arr.astype('bool').astype('uint8') * 255
 
 
-class OptimalController(Controller):
+class OptimalController(IOController):
 
     def __init__(self, *a, **k):
         super().__init__(*a, **k)
@@ -402,16 +445,21 @@ class OptimalController(Controller):
     def step(self):
         self._last_steering = steer = self.compute_control()
         throttle = self.compute_throttle()
-        print('thr=%.2f' % throttle, end=',')
+        logger.debug('thr=%.2f' % throttle)
         applied = self.gpad(steer=steer, accel=throttle, decel=self.brake)
         steer = applied[0]
 
         self.control_history.append([steer])
-        print('steer: %.2f' % steer, end=' ')
+        logger.debug('steer: %.2f' % steer)
         t = time.time()
-        print('dt=%.2f' % (t-self.last_cycle_time))
+        logger.debug('dt=%.2f' % (t-self.last_cycle_time))
         self.last_cycle_time = t
         return applied
+
+
+DEFAULT_CAR_THROTTLE = .45
+DEFAULT_TRUCK_THROTTLE = 0.5
+DEFAULT_BOAT_THROTTLE = 1.0
 
 
 def main():
@@ -424,19 +472,21 @@ def main():
     parser.add_argument('--save_plot', action='store_true', default=False)
     parser.add_argument('--mode', type=str, default='carmission')
     parser.add_argument('--error_kind', type=str, default=None)
+   
     parser.add_argument('--steer_limit', type=float, default=None)
+  
     parser.add_argument('--pid_tuning', type=str, default=None)
+    parser.add_argument('--dont_randomize_dest_on_stopiteration', action='store_true', default=True)
+    parser.add_argument('--randomize_dest_every_n_seconds', type=float, default=None)
     args = parser.parse_args()
-    print('Got args:', args)
-
-    # For debugging:
-    # args.mode = 'boatrace'
+    logger.info('Got args: {}'.format(args))
 
     car = 'car' in args.mode.lower()
     truck = 'truck' in args.mode.lower()
     wheeled = car or truck
     boat = 'boat' in args.mode.lower()
     mission= 'mission' in args.mode.lower()
+    chase = 'chase' in args.mode.lower()
     race = args.mode.lower() == 'race'
     boatrace = boat and race
     if args.throttle is None:
@@ -445,46 +495,87 @@ def main():
             else DEFAULT_CAR_THROTTLE if (car or race) 
             else DEFAULT_BOAT_THROTTLE if boat 
             else min(DEFAULT_BOAT_THROTTLE, DEFAULT_CAR_THROTTLE, .4))
-        print('args.throttle:', args.throttle)
-    if args.error_kind is None: args.error_kind = 'cte' if (car or mission) else 'heading'
-    if args.steer_limit is None: args.steer_limit = .5 if (car or race) else 1.0
+        logger.info('args.throttle: {}'.format(args.throttle))
+    if args.error_kind is None: args.error_kind = 'cte' if (car or mission or chase) else 'heading'
+    if args.steer_limit is None: args.steer_limit = .5 if (car or race or chase) else 1.0
     if args.pid_tuning is None:
-        args.pid_tuning = 'heavy' if truck else args.mode.lower()
+        args.pid_tuning = 'heavy' if truck else 'chase' if chase else 'car'
+    filters_present = ''
+    if car:
+        filters_present += 'car'
+    if boat:
+        filters_present += 'boat'
+    if truck:
+        filters_present += 'heavy'
+    if mission:
+        filters_present += 'mission'
+
+    logger.info('pid_tuning: {}'.format(args.pid_tuning))
+
+    logger.info('filters_present: {}'.format(filters_present))
     
-    controller = Controller(
+    controller = IOController(
         throttle=args.throttle, 
         error_kind=args.error_kind, 
         pretuned=args.pid_tuning,
+        filters_present=filters_present,
         steer_limit=args.steer_limit,
         minimum_throttle=args.minimum_throttle
     )
 
+    last_gps_randomization_time = time.time()
+
+
     while True:
         try:
-            controller.step()
+            do_randomize = False
+            try:
+                controller.step()
+
+            except StopIteration as e:
+                if args.dont_randomize_dest_on_stopiteration:
+                    raise e
+                else:
+                    if controller.n_randomizations > controller._max_randomizations:
+                        raise e
+                    else:
+                        do_randomize = True
+
+            if controller.has_few_points:
+                if controller.n_randomizations > controller._max_randomizations:
+                    raise StopIteration('Too many GPS randomizations.')
+                elif do_randomize:
+                    # The idea is that, once we get to our destination, rather than just exiting,
+                    # we shouldw select a new destination at random.
+                    controller.randomize_gps()
+
+            if args.randomize_dest_every_n_seconds is not None:
+                assert args.randomize_dest_every_n_seconds > 0
+                if time.time() - last_gps_randomization_time > args.randomize_dest_every_n_seconds:
+                    last_gps_randomization_time = time.time()
+                    controller.randomize_gps()
             
         except BaseException as e:
 
             if isinstance(e, KeyboardInterrupt):
                 logger.info('User interrupted.')
-                print('User interrupted.', args.show_plot)
-                if args.save_plot or args.show_plot:
-                    controller.stop()
-                    controller.plot(save=args.save_plot)
-                    if args.show_plot:
-                        plt.show()
+                break
+
+            elif isinstance(e, StopIteration):
+                logger.info('StopIteration.')
                 break
 
             else:
                 from traceback import format_exc
                 tb = format_exc()
                 logger.warning('Stopping: %s' % tb)
-                if args.save_plot or args.show_plot:
-                    controller.stop()
-                    controller.plot(save=args.save_plot)
-                    if args.show_plot:
-                        plt.show()
                 break
+
+        if args.save_plot or args.show_plot:
+            controller.stop()
+            controller.plot(save=args.save_plot)
+            if args.show_plot:
+                plt.show()
    
 
 if __name__ == '__main__':

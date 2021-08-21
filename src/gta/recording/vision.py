@@ -1,3 +1,11 @@
+import logging
+
+logformat = '%(asctime)s,%(msecs)d %(levelname)-8s [%(filename)s:%(lineno)d] %(message)s'
+datefmt = '%H:%M:%S'
+logging.basicConfig(format=logformat, datefmt=datefmt, level=logging.INFO)
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
 import time
 
 # Make program aware of DPI scaling
@@ -25,6 +33,8 @@ import numpy as np
 from gta.recording import BaseRecorder, BaseTask
 import cv2
 from PIL import ImageGrab, Image
+
+import pydirectinput
 
 
 
@@ -138,6 +148,13 @@ class Window:
             out = np.array(out)
         return out
 
+    def sendKeys(self, keys, delay=0.1):
+        """Send specified keys to the saved hwnd."""
+        for k in keys:
+            pydirectinput.keyDown(k)
+            time.sleep(delay)
+            pydirectinput.keyUp(k)
+            
 
 class GtaWindow(Window):
 
@@ -147,13 +164,24 @@ class GtaWindow(Window):
             wids.append(wid)
         win32gui.EnumWindows(saveWid, None)
 
-        widsByTitle = {win32gui.GetWindowText(wid): wid for wid in wids}
-        gtaWid = widsByTitle['Grand Theft Auto V']
+        gta_wids = [
+            wid for wid in wids
+            if 'Grand Theft Auto V' in win32gui.GetWindowText(wid)
+        ]
+        gta_wid = gta_wids[-1]
+        if len(gta_wids) > 1:
+            msg = []
+            msg.append('Multiple GTA windows found:')
+            for gta_wid_ in gta_wids:
+                msg.append('  {}'.format(win32gui.GetWindowText(gta_wid_)))
+            msg.append('Using WID: {}'.format(gta_wid))
+            msg.append('If this leads to errors, close or rename the other windows and try again.')
+            logger.warning('\n'.join(msg))
         
-        Window.__init__(self, gtaWid)
+        Window.__init__(self, gta_wid)
 
         self.window_size = self.grab().size[:2]
-        print('Window size:', self.window_size)
+        logger.info('Window size: {}'.format(self.window_size))
 
         # Make second number bigger if we tend to go into the right shoulder.
         self.car_origin = self.wscale(45, 46.5)
@@ -245,6 +273,7 @@ class GtaWindow(Window):
             magenta_line=(168, 84, 243),
             yellow_line=(241, 203, 88),
             green_line=(121, 206, 121),
+            sky_line=(101, 185, 230),
             race_dots=(240, 200, 80),
             purple_cross=(161, 73, 239),
             bluish=(79, 5, 154),
@@ -286,7 +315,7 @@ class VisionTask(BaseTask):
         else:
             img = self.window.img
         img = np.array(img)
-        print('Got image of shape', img.shape, '.')
+        logger.debug('Got image of shape {}.'.format(img.shape))
         return img
 
 
