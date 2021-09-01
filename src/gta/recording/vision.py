@@ -184,8 +184,10 @@ class GtaWindow(Window):
         logger.info('Window size: {}'.format(self.window_size))
 
         # Make second number bigger if we tend to go into the right shoulder.
-        self.car_origin = self.wscale(45, 46.5)
+        self.car_origin = self.wscale(45, 47)
+        self.car_origin_micromap_perspectiveTransformed = self.wscale(46, 44.5)
         self.car_origin_minimap = self.wscale(100, 110)
+        self.car_origin_minimap_perspectivetransformed = self.wscale(100, 60)  # TODO: Retune these values.
         self.last_cycle_time = time.time()
 
     def wscale(self, a, b, c=None, d=None):
@@ -207,29 +209,43 @@ class GtaWindow(Window):
         return self.grab()
 
     @staticmethod
-    def minimap_perspective_transform(img):
+    def minimap_perspective_transform(img, visualize=False):
         from_points = np.array([
-            (85, 70),
-            (140, 70),
-            (150, 108),
-            (75, 108),
-        ]) # x, y coordinates
+            (93, 52),
+            (166, 52),
+            (166, 80),
+            (75, 80),
+        ], dtype='float32') # x, y coordinates (or column, row)
 
-        lined = cv2.polylines(np.array(img), [np.array(from_points)], True, (255, 255, 0), 1)
-        cv2.imshow('Before Perspective Transform', lined)
+        if visualize:
+            line_to_draw = np.array(from_points.reshape((-1, 1, 2)), dtype='int32')
+            lined = cv2.polylines(np.array(img), line_to_draw, True, (255, 255, 0), 8)
+            cv2.imshow('Before Perspective Transform', lined)
 
-        # TODO: The folowing points are backwards (y,x) and need to be tuned.
-        to_points = [
-            (55, 115),
-            (85, 115),
-            (85, 200),
-            (55, 200),
-        ]
+        d = 45
+        x0 = 145
+        y0 = 196
+        to_points = np.array([
+            (x0,   y0),
+            (x0+d, y0),
+            (x0+d, y0+d),
+            (x0,   y0+d),
+        ], dtype='float32')
 
         M = cv2.getPerspectiveTransform(from_points, to_points)
-        warped = cv2.warpPerspective(img, M)#, (maxWidth, maxHeight))
-        cv2.imshow('Perspective Warped', warped, img.shape[:2])
-        cv2.waitKey(0)
+        h, w = img.shape[:2]
+        logger.debug('Old size: {}x{}'.format(w, h))
+        w = int(w * 1.15)
+        h = int(h * 1.5)
+        logger.debug('New size: {}x{}'.format(w, h))
+        warped = cv2.warpPerspective(img, M, (w, h))
+
+        if visualize:
+            lined2 = cv2.polylines(np.array(warped), np.array(to_points.reshape((-1, 1, 2)), dtype='int32'), True, (255, 0, 255), 8)
+            cv2.imshow('Perspective Warped', lined2)
+            cv2.waitKey(1)
+
+        return warped
 
     @property
     def minimap(self):
@@ -243,15 +259,33 @@ class GtaWindow(Window):
     def track_mask(self):
         return self.get_track_mask()
 
-    def get_track_mask(self, basemap_kind='micromap', do_erode=True, filters_present=['all']):
-        # TODO: Do perspective transform in here.
+    @staticmethod
+    def perspective_minimap_to_micromap(minimap):
+        DY, DX = minimap.shape[:2]
+        dx1 = int(0.3 * DX)
+        dx2 = int(0.4 * DX)
+        dy1 = int(0.7 * DY)
+        dy2 = int(0.05 * DY)
+        assert dx1 + dx2 < DX
+        assert dy1 + dy2 < DY
+        return minimap[dy1:-dy2, dx1:-dx2]
+
+    def get_track_mask(self, basemap_kind='micromap', do_erode=True, filters_present=['all'], do_perspective_transform=True):
+        
         t1 = time.time()
-        if basemap_kind == 'micromap':
-            basemap = np.array(self.micromap)
-        else:
-            assert basemap_kind == 'minimap'
+        if basemap_kind == 'minimap' or do_perspective_transform:
             basemap = np.array(self.minimap)
+        else:
+            basemap = np.array(self.micromap)
+            assert basemap_kind == 'micromap'
         t2 = time.time()
+
+        if do_perspective_transform:
+            basemap = self.minimap_perspective_transform(basemap)
+
+            if basemap_kind == 'micromap':
+                basemap = self.perspective_minimap_to_micromap(basemap)
+
         # hsv = cv2.cvtColor(basemap, cv2.COLOR_RGB2HSV)
         # r = basemap[..., 0]
         # g = basemap[..., 1]
@@ -328,4 +362,4 @@ class VisionRecorder(BaseRecorder):
 
 if __name__ == '__main__':
     window = GtaWindow()
-    window.minimap_perspective_transform(window.minimap)
+    window.minimap_perspective_transform(window.minimap, visualize=True)

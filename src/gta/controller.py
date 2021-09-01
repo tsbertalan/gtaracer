@@ -12,7 +12,7 @@ logformat = '%(asctime)s %(levelname)-8s [%(filename)s:%(lineno)d] %(message)s'
 datefmt = '%H:%M:%S'
 logging.basicConfig(format=logformat, datefmt=datefmt, level=logging.INFO)
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 from sys import path
 from os.path import join, expanduser
@@ -33,7 +33,9 @@ class PointsError(ValueError):
 class IOController:
 
     def __init__(self, throttle=None, minimum_throttle=None, steer_limit=0.5, kp=.1, ki=0.02, kd=0.05, 
-        pretuned='car', filters_present='carmission', error_kind='cte', draw_on_basemap=False):
+        pretuned='car', filters_present='carmission', error_kind='cte', draw_on_basemap=False,
+        do_perspective_transform=True, dry_run=False, use_minimap=False
+        ):
         self.error_kind = error_kind
         if error_kind == 'cte':
             self._too_few_points_minpoints = 1
@@ -43,30 +45,44 @@ class IOController:
         steer_limit = abs(steer_limit)
         self.gameWindow = gta.recording.vision.GtaWindow()
         self.draw_on_basemap = draw_on_basemap
-        self._too_few_points_maxiter = 2500
+        self._too_few_points_maxiter = TOO_FEW_POINTS_MAXITER_DEFAULT
         self.n_randomizations = 0
         self.last_randomization = time.time()
         self.min_randomize_interval = 10.
         self._max_randomizations = 5
 
+        self.do_perspective_transform = do_perspective_transform
+
+        self.dry_run = dry_run
+        self.use_minimap = use_minimap
+
+        self.filter_display_level = 128
+        self.tentacle_color = 128, 255, 0  # r, g, b
        
         self.angle_weight = 4
         self.offset_weight = .5
-        if pretuned is not None:
-            logger.info('PID pretuning: {}'.format(pretuned))
-            kp, ki, kd = dict(
-                car=(.22, .03, .1), 
-                chase=(.18, .005, .35), 
-                heavy=(.3, .03, .1),
-                mission=(.22, .03, .01), 
-                carmission=(.22, .03, .01),
-                slowcarrace=(1.5, .1, .01), 
-                race=(.8, .1, .01), 
-                rcrace=(.8, .05, .01), 
-                boatrace=(1.6, .06, .005),
-                boat=(.8, 0.02, 0), 
-                sailboat=(.9, .05, 0)
-            )[pretuned]
+        assert pretuned is not None
+
+        logger.info('PID pretuning: {}'.format(pretuned))
+        kp, ki, kd = dict(
+            car=(.22, .03, .1), 
+            chase=(.18, .005, .35), 
+            heavy=(.3, .03, .1),
+            mission=(.22, .03, .01), 
+            carmission=(.22, .03, .01),
+            slowcarrace=(1.5, .1, .01), 
+            race=(.8, .1, .01), 
+            rcrace=(.8, .05, .01), 
+            boatrace=(1.6, .06, .005),
+            boat=(.8, 0.02, 0), 
+            sailboat=(.9, .05, 0)
+        )[pretuned]
+
+        if self.do_perspective_transform:
+            perspective_factor = 1.1
+            kp *= perspective_factor
+            ki *= perspective_factor
+            kd *= perspective_factor
 
         if filters_present is not None:
             filter_options = dict(
@@ -75,10 +91,11 @@ class IOController:
                 carmission=['magenta_line', 'yellow_line', 'green_line', 'sky_line'],
                 race=['all'],
                 slowcarrace=['all'],
+                boat=['all'],
                 rcrace=['all'],
                 boatrace=['all'],
-                boat=['purple_cross'],
-                sailboat=['purple_cross'],
+                walk=['purple_cross'],
+                sailboat=['purple_cross', 'race_dots'],
             )
             self.filters_present = set()
             if 'car' in filters_present:
@@ -88,7 +105,9 @@ class IOController:
             if 'race' in filters_present or 'slowcarrace' in filters_present or 'rcrace' in filters_present:
                 self.filters_present.add('all')
             if 'boat' in filters_present:
-                self.filters_present.add('purple_cross')
+                self.filters_present.update(filter_options['boat'])
+            if 'race' in filters_present:
+                self.filters_present.update(filter_options['race'])
                 
         if len(self.filters_present) == 0:
             self.filters_present = ['all']
@@ -137,7 +156,7 @@ class IOController:
             return out
 
     def get_heading_error(self):
-        tm, basemap = self.gameWindow.get_track_mask(basemap_kind='minimap', do_erode=False, filters_present=self.filters_present)
+        tm, basemap = self.gameWindow.get_track_mask(basemap_kind='minimap', do_erode=False, filters_present=self.filters_present, do_perspective_transform=self.do_perspective_transform)
         tm = np.array(tm)
 
         rows, cols = tm.shape[:2]
@@ -145,9 +164,11 @@ class IOController:
         scale = 2.0
         if self.draw_on_basemap:
             display = np.array(self.gameWindow.minimap)
+            # Convert CV2 to Matplotlib colors
+            display = cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
         else:
             display = tm
-            display = np.copy(display if 'uint' in str(display.dtype) else display.astype('uint8')*255)
+            display = np.copy(display if 'uint' in str(display.dtype) else display.astype('uint8')*self.filter_display_level)
             display = np.dstack([display, display, display])
 
         try:
@@ -174,11 +195,11 @@ class IOController:
             self.squared_distance_to_waypoint = np.sqrt(dx ** 2 + dy ** 2)
 
             self.draw_dot(display, [x0, y0])
-            self.draw_dot(display, [x1, y1], color=(255, 0, 0))
+            self.draw_dot(display, [x1, y1], color=(self.filter_display_level, 0, 0))
             xl = np.arange(int(x0), int(x1))
             yl = ((xl-x0) * slope + y0).astype('uint16')
             ok = np.logical_and(yl > 0, yl < display.shape[1])
-            display[xl[ok], yl[ok], :] = 255
+            display[xl[ok], yl[ok], :] = self.tentacle_color
 
         except ValueError:
             pass
@@ -226,7 +247,21 @@ class IOController:
                 display[int(r), np.arange(int(cc-radii[1]), int(cc+radii[1]+1)), i] = v
 
     def get_cte(self):
-        tm, basemap = self.gameWindow.get_track_mask(basemap_kind='micromap', do_erode=False, filters_present=self.filters_present)
+        minimap = self.use_minimap  # Whether to keep the larger minimap or zoom in to the smaller "micromap".
+        origin = (
+            self.gameWindow.car_origin_micromap_perspectiveTransformed
+            if self.do_perspective_transform else
+            self.gameWindow.car_origin
+        ) if not minimap else (
+            self.gameWindow.car_origin_minimap_perspectivetransformed 
+            if self.do_perspective_transform else
+            self.gameWindow.car_origin_minimap
+        )
+        tm, basemap = self.gameWindow.get_track_mask(
+            basemap_kind='minimap' if minimap else 'micromap', do_erode=False, 
+            filters_present=self.filters_present,
+            do_perspective_transform=self.do_perspective_transform,
+        )
         tm = np.array(tm)
         rows, cols = tm.shape[:2]
         points = np.argwhere(tm)
@@ -247,24 +282,34 @@ class IOController:
 
         if self.draw_on_basemap:
             display = basemap
+            # Convert CV2 to Matplotlib colors
+            display = cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
         else:
-            display = tm.astype('uint8')*255
+            display = tm.astype('uint8')*self.filter_display_level
             rows, cols = display.squeeze().shape
             display = np.dstack([display, display, display])
 
         if 'poly' in locals():
-            Y = np.arange(self.gameWindow.car_origin[0]).astype(int)
+
+            # Take y values from the origin up to the highest point.
+            Y = np.arange(origin[0]).astype(int)
+
+            # Evaluate the corresponding x values.
             X = poly(Y).astype(int)
             ok = np.logical_and(X>0, X<cols)
-            display[Y[ok], X[ok], 0] = 0
-            display[Y[ok], X[ok], 1] = 255
-            display[Y[ok], X[ok], 2] = 0
+            display[Y[ok], X[ok], 0] = self.tentacle_color[2]
+            display[Y[ok], X[ok], 1] = self.tentacle_color[1]
+            display[Y[ok], X[ok], 2] = self.tentacle_color[0]
+
+            # Use a morphological filter to thicken the line.
+            kernel = np.ones((3, 3), np.uint8)
+            display = cv2.dilate(display, kernel, iterations=1)
         
-        self.draw_dot(display, self.gameWindow.car_origin)
+        self.draw_dot(display, origin)
         self.draw_dot(display,
             [
-                self.gameWindow.car_origin[0]+self.slope_vertical_offset,
-                self.gameWindow.car_origin[1],
+                origin[0]+self.slope_vertical_offset,
+                origin[1],
             ],
             color=(0, 255, 255),
             radii=(1, 3),
@@ -277,8 +322,8 @@ class IOController:
         cv2.waitKey(1)
 
         if 'slope' in locals():
-            offset = self.gameWindow.car_origin[1] - poly(self.gameWindow.car_origin[0])
-            angle = np.arctan(slope(self.gameWindow.car_origin[0]+self.slope_vertical_offset))
+            offset = origin[1] - poly(origin[0])
+            angle = np.arctan(slope(origin[0]+self.slope_vertical_offset))
             ow = offset * self.offset_weight
             aw = angle  * self.angle_weight
             err = ow + aw
@@ -317,15 +362,16 @@ class IOController:
        
         self._last_steering = steer = self.compute_control()
         throttle = self.compute_throttle()
-        applied = self.gpad(steer=steer, accel=throttle, decel=self.brake)
-        steer = applied[0]
+        if not self.dry_run:
+            applied = self.gpad(steer=steer, accel=throttle, decel=self.brake)
+            steer = applied[0]
 
-        pom = '(PoM)' if self.pid.proportional_on_measurement else ''
-        p,i,d = self.pid.components
-        self.control_history.append([p, i, d, steer])
-        t = time.time()
-        self.last_cycle_time = t
-        return applied
+            pom = '(PoM)' if self.pid.proportional_on_measurement else ''
+            p,i,d = self.pid.components
+            self.control_history.append([p, i, d, steer])
+            t = time.time()
+            self.last_cycle_time = t
+            return applied
 
     def stop(self):
         self.gpad(steer=0, accel=0, decel=0)
@@ -457,9 +503,11 @@ class OptimalController(IOController):
         return applied
 
 
-DEFAULT_CAR_THROTTLE = .45
-DEFAULT_TRUCK_THROTTLE = 0.5
-DEFAULT_BOAT_THROTTLE = 1.0
+DEFAULT_CAR_THROTTLE = .36
+DEFAULT_TRUCK_THROTTLE = 0.4
+DEFAULT_BOAT_THROTTLE = 0.8
+TOO_FEW_POINTS_MAXITER_DEFAULT = 3500
+DEFAULT_MODE = 'carmission'
 
 
 def main():
@@ -470,7 +518,7 @@ def main():
     parser.add_argument('--minimum_throttle', type=float, default=None)
     parser.add_argument('--show_plot', action='store_true', default=False)
     parser.add_argument('--save_plot', action='store_true', default=False)
-    parser.add_argument('--mode', type=str, default='carmission')
+    parser.add_argument('--mode', type=str, default=DEFAULT_MODE)
     parser.add_argument('--error_kind', type=str, default=None)
    
     parser.add_argument('--steer_limit', type=float, default=None)
@@ -499,7 +547,7 @@ def main():
     if args.error_kind is None: args.error_kind = 'cte' if (car or mission or chase) else 'heading'
     if args.steer_limit is None: args.steer_limit = .5 if (car or race or chase) else 1.0
     if args.pid_tuning is None:
-        args.pid_tuning = 'heavy' if truck else 'chase' if chase else 'car'
+        args.pid_tuning = 'heavy' if truck else 'chase' if chase else 'car' if car else 'boat'
     filters_present = ''
     if car:
         filters_present += 'car'
@@ -520,7 +568,8 @@ def main():
         pretuned=args.pid_tuning,
         filters_present=filters_present,
         steer_limit=args.steer_limit,
-        minimum_throttle=args.minimum_throttle
+        minimum_throttle=args.minimum_throttle,
+        dry_run=False,
     )
 
     last_gps_randomization_time = time.time()
