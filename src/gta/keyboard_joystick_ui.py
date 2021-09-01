@@ -2,6 +2,9 @@
 
 from sys import stdout
 import time
+from sys import path
+from os.path import join, expanduser
+path.append(join(expanduser('~'), 'Dropbox', 'Projects', 'GTARacer', 'src'))
 import gta.gameInputs.gamepad
 import msvcrt
 
@@ -72,13 +75,13 @@ if __name__ == '__main__':
 
 
     print('''
-    W: forward
-    S: backward
-    A: left strafe
-    D: right strafe
-    Q: left turn
-    E: right turn
-    F: accel
+    W: forward (walk)
+    S: backward (walk)
+    A: left strafe (walk) or turn (drive)
+    D: right strafe (walk) or turn (drive)
+    Q: left turn (walk)
+    E: right turn (walk)
+    F: accel (drive) or shoot (walk)
     R: decel
     Other keys: quit
     ''')
