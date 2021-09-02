@@ -1,7 +1,5 @@
 import numpy as np
 
-# import matplotlib.pyplot as plt
-
 # try:
 from PIL import Image
 # except ImportError:
@@ -15,6 +13,14 @@ from pytesseract import image_to_string
 
 from scipy.interpolate import UnivariateSpline
 from sklearn.linear_model import LinearRegression, RANSACRegressor
+from sklearn.preprocessing import PolynomialFeatures
+
+from os.path import join, expanduser, dirname
+HERE = dirname(__file__)
+from sys import path
+path.append(join(HERE, '..'))
+
+import gta.robust_spline
 
 def load_data(data_path):
     data = np.load(data_path, allow_pickle=True)
@@ -140,7 +146,7 @@ def get_text(img,
     stdkw['sharpness_factor'] = 0
     std = enhance(img, **stdkw, array=True).std()
     if std < std_threshold:
-        return ''
+        return '', enhanced_img
 
     # Generate Tesseract config options
     # see https://github.com/tesseract-ocr/tesseract/wiki/Command-Line-Usage
@@ -187,7 +193,7 @@ def process_npz(data_path, max_images=9999999, skip=1):
     print('Time between images with this skip factor is %.2f+/-%.2f seconds' % (mean_dt, std_dt))
 
     dists_units = []
-    for im in tqdm(images, unit='images'):
+    for im in tqdm(images, unit='images', desc='Extracting distances'):
         dists_units.append(get_dist(im))
 
     dists_any_units = np.array([d for (d,u) in dists_units]).astype(float)
@@ -201,29 +207,62 @@ def process_npz(data_path, max_images=9999999, skip=1):
     ])
 
     ok = np.argwhere(np.logical_not(np.isnan(dists_miles))).ravel()
+    # cubic = PolynomialFeatures(degree=3)
+    # cubic_features = cubic.fit_transform(image_times[ok].reshape((-1, 1)))
 
-    ransac = RANSACRegressor(LinearRegression(), 
-    #                          max_trials=100, 
-    #                          min_samples=50, 
-    #                          residual_metric=lambda x: np.sum(np.abs(x), axis=1), 
-    #                          residual_threshold=5.0, 
-                            random_state=0)
-    ransac.fit(image_times[ok].reshape((-1, 1)), dists_miles[ok].reshape((-1, 1)))
-    inliers = np.argwhere(ransac.inlier_mask_).ravel()
+    # try:
+    #     ransac = RANSACRegressor(LinearRegression(), random_state=0) 
+    #                         #  max_trials=100, 
+    # #                          min_samples=50, 
+    # #                          residual_metric=lambda x: np.sum(np.abs(x), axis=1), 
+    # #                          residual_threshold=5.0, 
+    #                         # random_state=0)
+    #     ransac.fit(cubic_features, dists_miles[ok].reshape((-1, 1)))
+    # except ValueError:
+    #     # RANSAC failed; loosen the threshold.
+    #     ransac = RANSACRegressor(LinearRegression(), random_state=0, residual_threshold=.1)
+    # inliers = np.argwhere(ransac.inlier_mask_).ravel()
 
+    # Use a particular knot spacing in seconds.
+    recording_length = image_times.max() - image_times.min()
+    target_knots_1 = int(recording_length / 5.38)
+    # target_knots_2 = int(recording_length / 12.1)
+
+    # Fit one "robust spline" just so we know which are the inliers.
+    rspline = gta.robust_spline.RobustSpline(residual_threshold=.01, n_knots=target_knots_1)
+    rspline.fit(image_times[ok], dists_miles[ok])
+    inliers = np.argwhere(rspline.inliers).ravel()
+
+    # Use just these inliers to fit our real spline(s), with alternate parameters.
     t_cleaned = image_times[ok][inliers]
     tmin = t_cleaned.min()
     t_cleaned -= tmin
     d_cleaned = dists_miles[ok][inliers]
     t_all = image_times - tmin
 
+    # # Fit a second rspline with a different knot spacing.
+    # rspline_2 = gta.robust_spline.RobustSpline(residual_threshold=.01, n_knots=target_knots_2)
+    # rspline_2.fit(t_cleaned, d_cleaned)
 
-    spl = UnivariateSpline(t_cleaned, d_cleaned)
+    # Fit a vanilla sklearn spline with a more reasonable number of knots.
+    # (Also, I don't know how to get the derivative of the rspline.)
+    spline_smoothing_factor = .01  # This is a minimum error bound for the spline fitting the data,
+    # and the number of knots will adjust to meet it. If it's zero, then the spline will go through every point.
+    spl = UnivariateSpline(t_cleaned, d_cleaned, s=spline_smoothing_factor)
 
     velocities = spl.derivative(1)(t_all)
     v_cleaned = spl.derivative(1)(t_cleaned)
     d_fit = spl(t_cleaned)
     d_all = spl(t_all)
+
+    # fig, ax = plt.subplots()
+    # ax.scatter(image_times[ok][inliers].ravel(), dists_miles[ok][inliers].ravel(), marker='o', label='inliers')
+    # ax.plot(image_times.ravel(), rspline.predict(image_times.reshape((-1, 1))).ravel(), linewidth=5, alpha=.6, label='Inlier-Detection RSpline')
+    # ax.plot(t_all+tmin, rspline_2.predict(t_all.reshape((-1, 1))).ravel(), linewidth=5, alpha=.6, label='RSpline with fewer knots')
+    # ax.plot(t_all+tmin, spl(t_all.reshape((-1, 1))).ravel(), linewidth=5, alpha=.6, linestyle='--', label='USpline, $s=%f$' % spline_smoothing_factor)
+    # ax.legend()
+    # ax.set_ylim(.7, 1.3)
+    # fig.savefig('recordings/check_data.png')
 
     return {
         'images': images,
@@ -239,13 +278,30 @@ def process_npz(data_path, max_images=9999999, skip=1):
     }
 
 
-def reduce_npz(data_path, **kw_process):
+def reduce_npz(data_path, img_height=32, **kw_process):
     assert data_path.endswith('.npz')
 
     processed = process_npz(data_path, **kw_process)
 
+    n, h, w, c = processed['images'].shape
+    aspect_ratio = w / h
+    img_width = int(img_height * aspect_ratio)
+
+    import skimage.transform
+    scaled_images = np.stack([
+        skimage.transform.resize(img, (img_height, img_width))
+        for img in tqdm(processed['images'], desc='Rescaling images', unit='image')
+    ])
+
+    to_save = {
+        k: v
+        for k, v in processed.items()
+        if k not in ['images',]
+    }
+    to_save['images'] = scaled_images
+
     save_path = data_path.replace('.npz', '.reduced.npz')
-    np.savez_compressed(save_path, **processed)
+    np.savez_compressed(save_path, **to_save)
 
     print('Reduced data saved to %s' % save_path)
     return save_path, processed
@@ -253,22 +309,33 @@ def reduce_npz(data_path, **kw_process):
     
 
 if __name__ == '__main__':
-    from os.path import join, expanduser, dirname
+    
     import matplotlib
     matplotlib.use('agg')
     import matplotlib.pyplot as plt
 
-    HERE = dirname(__file__)
-    figdir = join(HERE, '..', '..', 'doc', 'figures')
+    
 
-    from sys import path
-    path.append(join(expanduser('~'), 'Dropbox', 'Projects', 'GTARacer', 'src'))
+    from argparse import ArgumentParser
+    parser = ArgumentParser()
+    parser.add_argument('--figdir', type=str, default=join(HERE, '..', '..', 'doc', 'figures'))
+
+    parser.add_argument('--data_path', type=str, default=join(
+        expanduser('~'), 'data', 'gta',
+        '2021-08-22-15-37-39-gtav_recording.npz'
+    ))
+    args = parser.parse_args()
+
+    figdir = args.figdir
+
     from gta.utils import mkdir_p
     mkdir_p(figdir)
 
-    data_path = join(expanduser('~'), 'data', 'gta', 'highway_2021_08-a.npz')
+    data_path = args.data_path
 
-    save_path, processed = reduce_npz(data_path, skip=10)
+# 2021-08-22-13-01-57-gtav_recording.npz                              2021-08-22-14-13-41-gtav_recording.npz                              2021-08-22-14-34-09-gtav_recording.npz
+
+    save_path, processed = reduce_npz(data_path, skip=1)
 
     t = processed['t']
     velocities = processed['v']
