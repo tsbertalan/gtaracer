@@ -306,34 +306,14 @@ def reduce_npz(data_path, img_height=32, **kw_process):
     print('Reduced data saved to %s' % save_path)
     return save_path, processed
 
-    
 
-if __name__ == '__main__':
-    
-    import matplotlib
-    matplotlib.use('agg')
-    import matplotlib.pyplot as plt
+def main(figdir, data_path):
 
-    
-
-    from argparse import ArgumentParser
-    parser = ArgumentParser()
-    parser.add_argument('--figdir', type=str, default=join(HERE, '..', '..', 'doc', 'figures'))
-
-    parser.add_argument('--data_path', type=str, default=join(
-        expanduser('~'), 'data', 'gta',
-        '2021-08-22-15-37-39-gtav_recording.npz'
-    ))
-    args = parser.parse_args()
-
-    figdir = args.figdir
 
     from gta.utils import mkdir_p
     mkdir_p(figdir)
 
-    data_path = args.data_path
-
-# 2021-08-22-13-01-57-gtav_recording.npz                              2021-08-22-14-13-41-gtav_recording.npz                              2021-08-22-14-34-09-gtav_recording.npz
+    # 2021-08-22-13-01-57-gtav_recording.npz                              2021-08-22-14-13-41-gtav_recording.npz                              2021-08-22-14-34-09-gtav_recording.npz
 
     save_path, processed = reduce_npz(data_path, skip=1)
 
@@ -365,3 +345,36 @@ if __name__ == '__main__':
 
     fig.tight_layout()
     fig.savefig(join(figdir, 'vel_cleaned.png'))
+    
+
+if __name__ == '__main__':
+    
+    import matplotlib
+    matplotlib.use('agg')
+    import matplotlib.pyplot as plt
+
+    
+
+    from argparse import ArgumentParser
+    parser = ArgumentParser()
+    parser.add_argument('--figdir', type=str, default=join(HERE, '..', '..', 'doc', 'figures'))
+
+    parser.add_argument('--data_path', type=str, default=join(
+        expanduser('~'), 'data', 'gta', 'velocity_prediction',
+    ))
+    args = parser.parse_args()
+    figdir = args.figdir
+    data_path = args.data_path
+
+    if data_path.endswith('.npz'):
+        data_path, processed = reduce_npz(data_path)
+
+    else:
+        from glob import glob
+        search_path = join(data_path, '*-gtav_recording.npz')
+        data_paths = glob(search_path)
+        print('Found', len(data_paths), 'data files in', search_path, '.')
+        for data_path_single in tqdm(data_paths, desc='Processing data', unit='file'):
+            main(figdir, data_path_single)
+
+

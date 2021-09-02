@@ -6,7 +6,6 @@ home = os.path.expanduser("~")
 
 def mkdir_p(path):
     try:
-        print("Creating directory: {}".format(path))
         os.makedirs(path)
     except FileExistsError:
         pass
