@@ -185,7 +185,7 @@ class GtaWindow(Window):
 
         # Make second number bigger if we tend to go into the right shoulder.
         self.car_origin = self.wscale(45, 47)
-        self.car_origin_micromap_perspectiveTransformed = self.wscale(46, 44.5)
+        self.car_origin_micromap_perspectiveTransformed = self.wscale(46, 44.25)
         self.car_origin_minimap = self.wscale(100, 110)
         self.car_origin_minimap_perspectivetransformed = self.wscale(100, 60)  # TODO: Retune these values.
         self.last_cycle_time = time.time()

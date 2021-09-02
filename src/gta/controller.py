@@ -79,7 +79,8 @@ class IOController:
         )[pretuned]
 
         if self.do_perspective_transform:
-            perspective_factor = 1.1
+            # Compensate for changed units after perspective transform.
+            perspective_factor = 2.0
             kp *= perspective_factor
             ki *= perspective_factor
             kd *= perspective_factor
