@@ -62,10 +62,7 @@ class EntityState(Structure):
         ("rvely", c_float),
         ("rvelz", c_float),
 
-        # What's supposed to be wall-clock time, given by something like
-        # (double)time.QuadPart / freq.QuadPart
-        # However, I'm not sure if this really corresponds to Python's time.time()
-        # TODO: Get a reasonably corresponding wall-clock time from C++ to match Python's.
+        # Corresponds to Python's time.monotonic
         ("wall_time", c_double),
 
         # If the entity is on-screen, its coordinates in screen space (pixels?).
@@ -212,11 +209,8 @@ def read_data(fname):
 def read_data_main(plot_3d=False, fname="C:\Program Files (x86)\Steam\SteamApps\common\Grand Theft Auto V\GTA_recording.bin"):
     data = read_data(fname)
 
-    # TODO: Save real ego packets from C++ and read them here. id==0 cannot be trusted.
-    # is_player = lambda d: d.dist_to_player < 0.1
-    is_player = lambda d: d.is_player
-    ego_peds = [d for d in data if not d.is_vehicle and is_player(d)]
-    ego_vehs = [d for d in data if d.is_vehicle and is_player(d)]
+    ego_peds = [d for d in data if not d.is_vehicle and d.is_player]
+    ego_vehs = [d for d in data if d.is_vehicle and d.is_player]
 
     x_ego = [d.posx for d in ego_peds]
     y_ego = [d.posy for d in ego_peds]
