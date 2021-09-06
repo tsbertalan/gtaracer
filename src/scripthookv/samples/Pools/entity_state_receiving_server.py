@@ -1,63 +1,121 @@
-import socketserver, time, numbers
+"""
+Read a stream of entity state structs from a file.
 
+Later, we might want to read from a network socket instead.
+"""
+import numbers
+from collections import namedtuple
 from ctypes import c_uint, c_double, c_float, c_bool, Structure, c_char, sizeof
+from tqdm.auto import tqdm
+import struct
+import matplotlib.pyplot as plt
 
 
 class EntityState(Structure):
+    """
+    This is how we will receive data from the C++ side.
 
+    Even though we write sizeof(c_struct) bytes from the C++ side, 
+    it ends up writing a few extra for padding. Doing sizeof(EntityState) from
+    the Python side correctly predicts this, whereas just doing 
+    struct.calcsize(EntityState.structure_code) doesn't.
+    So, we need to read chunks of the former, larger size, 
+    but then feed only the smaller first part of these chunks
+    into struct.unpack(), which is *much* faster than EntityState.from_buffer_copy().
+
+    Still, we'll keep EntityState around as a useful list of explicit class names, 
+    from which to build our namedtuple.
+    """
 
     _fields_ = [
+        # A start marker for the beginning of the struct. Always the bytes b'GTA'.
         ("m1", c_char),
         ("m2", c_char),
         ("m3", c_char),
        
-        ("id", c_uint),           # 4 bytes
+        # The entity's non-unique ID in this timestep--just an index 
+        # in the list of either vehicles or pedestrians.
+        # That is, the combination of ID and the later is_vehicle is unique per time step.
+        ("id", c_uint),
 
-        ("posx", c_float),        # 4 bytes
-        ("posy", c_float),        # 4 bytes 
-        ("posz", c_float),        # 4 bytes
+        # Absolute position in the world--not yet sure about the units.
+        # TODO: check units.
+        ("posx", c_float),
+        ("posy", c_float),
+        ("posz", c_float),
 
-        ("roll", c_float),        # 4 bytes
-        ("pitch", c_float),       # 4 bytes
-        ("yaw", c_float),         # 4 bytes
+        # Euler angles in the world frame (right)?
+        # TODO: check frames.
+        ("roll", c_float),
+        ("pitch", c_float),
+        ("yaw", c_float),
 
-        ("velx", c_float),        # 4 bytes
-        ("vely", c_float),        # 4 bytes
-        ("velz", c_float),        # 4 bytes
+        # Velocity
+        ("velx", c_float),
+        ("vely", c_float),
+        ("velz", c_float),
 
-        ("rvelx", c_float),       # 4 bytes
-        ("rvely", c_float),       # 4 bytes
-        ("rvelz", c_float),       # 4 bytes
+        # Rotational velocity
+        ("rvelx", c_float),
+        ("rvely", c_float),
+        ("rvelz", c_float),
 
-        ("wall_time", c_double),  # 8 bytes
+        # What's supposed to be wall-clock time, given by something like
+        # (double)time.QuadPart / freq.QuadPart
+        # However, I'm not sure if this really corresponds to Python's time.time()
+        # TODO: Get a reasonably corresponding wall-clock time from C++ to match Python's.
+        ("wall_time", c_double),
 
-        ("screenx", c_float),     # 4 bytes
-        ("screeny", c_float),     # 4 bytes 
+        # If the entity is on-screen, its coordinates in screen space (pixels?).
+        ("screenx", c_float),
+        ("screeny", c_float),
 
-        ("occluded", c_bool),     # 1 byte
-        ("is_vehicle", c_bool),   # 1 byte
+        # Is the entity on-screen? This tends to err on the side of reporting False,
+        # even if something like a tree is almost completely blocking it.
+        # Or, maybe it just doesn't even count trees as occluding the entity.
+        ("occluded", c_bool),
+
+        # Whether the entity is a vehicle (vs a pedestrian).
+        ("is_vehicle", c_bool),
+
+        # TODO: Get more important fields: (1) vehicle type (for example, so we can ignore airplanes easily) (2) ??? (3) profit.
 
     ]
 
-    structure_code = 'c'*3 + 'I' + 'fff'*4 + 'dff??'
-
-    # or, 
-    # ccc               marker
-    # I fff fff fff fff d ff ??   data
-    # c                           checksum
-
-
-from collections import namedtuple
+# This structure code is what we'll *actually* use to read the struct.
+structure_code = ''
+for field_name, field_type in EntityState._fields_:
+    structure_code += {
+        c_uint: 'I',
+        c_float: 'f',
+        c_double: 'd',
+        c_bool: '?',
+        c_char: 'c',
+    }[field_type]
+    
 EntityStateTuple = namedtuple("EntityStateTuple", [field_name for field_name, unused_field_type in EntityState._fields_])
 
 
 def xorchecksum(data):
+    """
+    Verify that the checksum of a struct is correct.
+
+    I'm not sure how really necessary this is, since we're writing directly to disk.
+    But there might be some race conditions in e.g. how update() is called in the C++ code
+    that corrupt data, or we might seek to a start-sequence that is just a coincidence,
+    or we might later start sending this same data stream over the wire instead of reading from disk.
+    """
     checksum = 0
     for el in data:
         checksum ^= el
     return checksum
 
+
 def is_valid(entity_state, max_abs=1e10):
+    """A crude additional check of whether a packet is reasonable.
+    
+    TODO: Figure out what's causing unreasonable packets, that still have a valid checksum.
+    """
     if isinstance(entity_state, EntityState):
         for field_name, unused_field_type in entity_state._fields_:
             if abs(getattr(entity_state, field_name)) > max_abs:
@@ -70,124 +128,85 @@ def is_valid(entity_state, max_abs=1e10):
     return True
 
 
-class EntityStateReceivingHandler(socketserver.BaseRequestHandler):
 
-    def handle(self):
-        bufsize = sizeof(EntityState)
-        print('bufsize:', bufsize)
-        char_data = self.request.recv(bufsize)
+def read_data(fname):
+    """Scan through the data and make structs."""
 
-        # Unpack the data into the data structure
-        self.data = EntityState.from_buffer_copy(char_data)
-
-        print('[{time:01f}] received from {addr}: "{data}"'.format(
-            time=time.time()-self.server.t0, 
-            addr=self.client_address[0],
-            data=self.data
-        ))
-
-        for field_name, field_type in self.data._fields_:
-            print("{ty} {name} = {val}".format(
-                ty=field_type,
-                name=field_name,
-                val=getattr(self.data, field_name)
-            ))
-
-        # Flush stdout.
-        from sys import stdout
-        stdout.flush()
-
-
-class EntityStateReceivingServer(socketserver.TCPServer):
-
-    def __init__(self, *a, **k):
-        socketserver.TCPServer.__init__(self, *a, **k)
-        self.t0 = time.time()
-
-
-def UDP_main():
-    with EntityStateReceivingServer(("localhost", 27015), EntityStateReceivingHandler) as server:
-        server.serve_forever()
-
-
-def read_data_main(fname="C:\Program Files (x86)\Steam\SteamApps\common\Grand Theft Auto V\GTA_recording.bin"):
-
-    from tqdm.auto import tqdm
-    import struct
+    # We'll accumulate structs here.
     data = []
+
+    # Every struct starts with a 3-byte marker.
     marker = b'GTA'
+
+    # As explained above, we'll read chunks of the larger size,
+    # but then feed only the smaller first part into struct.unpack().
+    item_size = struct.calcsize(structure_code)
+    skip_size = sizeof(EntityState)
+    assert skip_size >= item_size
+
     with open(fname, "rb") as f:
         bytes = f.read()
-        item_size = struct.calcsize(EntityState.structure_code)
-        skip_size = sizeof(EntityState)
-        i = 0
+
         pbar = tqdm(total=len(bytes)/1024., unit='kbytes')
+        i = 0
         while True:
-            pbar_jump = int(i - pbar.n*1024.) // 1024
+
+            # Step the progressbar in units of kilobytes.
+            pbar_jump = int(i - pbar.n * 1024.) // 1024
             if pbar_jump > 0:
                 pbar.update(pbar_jump)
             
+            # Take a bigger bite.
             full_chunk = bytes[i:i+skip_size]
 
+            # Check for a marker.
             if not full_chunk.startswith(marker):
                 # Skip ahead until the next start marker.
                 offset = bytes[i:].find(marker)
-                if offset == -1:
-                    break
-                else:
+                if offset != -1:
                     i += offset
+                else:
+                    # No more markers; we're done.
+                    break
             
             else:
-
+                # Unpack from the smaller first part.
                 item_chunk = full_chunk[:item_size]
-                datum = struct.unpack(EntityState.structure_code, item_chunk)
+                datum = struct.unpack(structure_code, item_chunk)
+
+                # Construct a more convenient form.
                 datum = EntityStateTuple(*datum)
+
+                # Check the checksum. Note that the checksum is an
+                # extra byte appended *after* even the larger chunk.
+                # Because the larger and smaller chunk differ only by zero padding,
+                # they should have the same (xor) checksum.
+                # [sssssssssssssssslllllc]
+                #  ^^^^^^^^^^^^^^^^
+                #    smaller chunk
+                #  ^^^^^^^^^^^^^^^^^^^^^
+                #       larger chunk
+                #                       ^
+                #                checksum
                 checksum = xorchecksum(full_chunk[:-1])
                 target_checksum = full_chunk[-1]
 
-                #alt_datum = EntityState.from_buffer_copy(full_chunk)
-
+                # If the packets passes our test, we'll add it to the list.
                 if checksum == target_checksum and is_valid(datum):
                     data.append(datum)
 
+                # Continue to the next packet.
                 i += skip_size
+    return data
         
 
-        # total_bytes = len(bytes)
-        # pbar = tqdm(total=total_bytes, unit='bytes')
+def read_data_main(fname="C:\Program Files (x86)\Steam\SteamApps\common\Grand Theft Auto V\GTA_recording.bin"):
+    data = read_data(fname)
 
-        # while len(bytes) > len(marker):
-        #     pbar_position = total_bytes - pbar.n
-        #     if pbar_position != len(bytes):
-        #         pbar.update(pbar_position - len(bytes))
-
-        #     imarker = bytes.find(marker)
-
-        #     if imarker == -1:
-        #         break
-
-        #     i1 = imarker + len(marker)
-        #     i2 = i1 + sizeof(EntityState) + 1
-        #     chunk = bytes[i1:i2]
-
-        #     target_checksum = chunk[-1]
-        #     chunk = chunk[:-1]
-        #     checksum = xorchecksum(chunk)
-
-        #     if len(chunk) == sizeof(EntityState):
-        #         datum = EntityState.from_buffer_copy(chunk)
-        #         if is_valid(datum) and checksum == target_checksum:
-        #             data.append(datum)
-        #     else:
-        #         break
-
-        #     bytes = bytes[i2:]
-        #     bytes = bytes[bytes.find(marker):]
-        #     assert len(bytes) < len(marker) or bytes.startswith(marker)
-
+    # TODO: Save real ego packets from C++ and read them here. id==0 cannot be trusted.
     ego_peds = [d for d in data if not d.is_vehicle and d.id == 0]
 
-    import matplotlib.pyplot as plt
+    # Make some pretty plots.
     fig, ax = plt.subplots()
     x = [d.posx for d in ego_peds]
     y = [d.posy for d in ego_peds]
@@ -235,8 +254,6 @@ def read_data_main(fname="C:\Program Files (x86)\Steam\SteamApps\common\Grand Th
     ax.set_aspect('equal')
     duration = max(t) - min(t)
     ax.set_title('Entities over %s seconds' % duration)
-
-
     
 
     plt.show()
