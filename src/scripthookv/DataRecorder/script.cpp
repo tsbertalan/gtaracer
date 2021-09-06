@@ -26,8 +26,8 @@ typedef struct EntityState {
 	const char m1 = 'G';
 	const char m2 = 'T';
 	const char m3 = 'A';
-	uint id;  // 4
-	float // 4 * 12
+	int id;
+	float
 		posx, posy, posz,
 		roll, pitch, yaw,
 		velx, vely, velz,
@@ -140,7 +140,6 @@ std::ostringstream formatEntityState(Entity entity) {
 
 EntityState examineEntity(double wall_time, int id, Entity entity) {
 	EntityState s;
-	s.id = id;
 	s.wall_time = wall_time;
 
 	s.occluded = ENTITY::IS_ENTITY_OCCLUDED(entity);
@@ -173,6 +172,12 @@ EntityState examineEntity(double wall_time, int id, Entity entity) {
 	s.screeny = yvis;
 
 	s.is_vehicle = ENTITY::IS_ENTITY_A_VEHICLE(entity);
+	if (s.is_vehicle) {
+		s.id = ENTITY::GET_VEHICLE_INDEX_FROM_ENTITY_INDEX(entity);
+	}
+	else {
+		s.id = ENTITY::GET_PED_INDEX_FROM_ENTITY_INDEX(entity);
+	}
 
 	return s;
 }

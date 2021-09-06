@@ -5,7 +5,7 @@ Later, we might want to read from a network socket instead.
 """
 import numbers, numpy as np
 from collections import namedtuple
-from ctypes import c_uint, c_double, c_float, c_bool, Structure, c_char, sizeof
+from ctypes import c_uint, c_int, c_double, c_float, c_bool, Structure, c_char, sizeof
 from tqdm.auto import tqdm
 import struct
 import matplotlib.pyplot as plt
@@ -38,7 +38,7 @@ class EntityState(Structure):
         # The entity's non-unique ID in this timestep--just an index 
         # in the list of either vehicles or pedestrians.
         # That is, the combination of ID and the later is_vehicle is unique per time step.
-        ("id", c_uint),
+        ("id", c_int),
 
         # Absolute position in the world--not yet sure about the units.
         # TODO: check units.
@@ -80,8 +80,8 @@ class EntityState(Structure):
         # Whether the entity is a vehicle (vs a pedestrian).
         ("is_vehicle", c_bool),
 
-        # TODO: Get more important fields: (1) vehicle type (for example, so we can ignore airplanes easily) (2) ??? (3) profit.
-
+        # Whether the entity is the player or player's vehicle.
+        ("is_player", c_bool),
     ]
 
 # This structure code is what we'll *actually* use to read the struct.
@@ -93,6 +93,7 @@ for field_name, field_type in EntityState._fields_:
         c_double: 'd',
         c_bool: '?',
         c_char: 'c',
+        c_int: 'i',
     }[field_type]
     
 EntityStateTuple = namedtuple("EntityStateTuple", [field_name for field_name, unused_field_type in EntityState._fields_])
@@ -202,69 +203,90 @@ def read_data(fname):
     return data
         
 
-def read_data_main(plot_3d=True, fname="C:\Program Files (x86)\Steam\SteamApps\common\Grand Theft Auto V\GTA_recording.bin"):
+def read_data_main(plot_3d=False, fname="C:\Program Files (x86)\Steam\SteamApps\common\Grand Theft Auto V\GTA_recording.bin"):
     data = read_data(fname)
 
     # TODO: Save real ego packets from C++ and read them here. id==0 cannot be trusted.
-    ego_peds = [d for d in data if not d.is_vehicle and d.id == 0]
-
-    # Make some pretty plots.
-    fig, ax = plt.subplots()
+    ego_peds = [d for d in data if not d.is_vehicle and d.is_player]
     x_ego = [d.posx for d in ego_peds]
     y_ego = [d.posy for d in ego_peds]
-    if plot_3d:
-        z_ego = [d.posz for d in ego_peds]
-    get_spd = lambda d: d.velx**2 + d.vely**2 + d.velz**2
-    spd = [get_spd(d) for d in ego_peds]
-    t = [d.wall_time for d in ego_peds]
-    ax.plot(x_ego, y_ego, 'k-')
-    fig.colorbar(
-        ax.scatter(x_ego, y_ego, c=t, alpha=.5),
-        ax=ax,
-        label="wall time"
-    )
-    ax.set_xlabel('$x$')
-    ax.set_ylabel('$y$')
-    ax.set_aspect('equal')
-    duration = max(t) - min(t)
-    ax.set_title('Ego Ped over %s seconds' % duration)
+    z_ego = [d.posz for d in ego_peds]
 
-    fig, ax = plt.subplots()
-    ax.plot(t, x_ego, label='$x(t)$')
-    ax.plot(t, y_ego, label='$y(t)$')
-    ax.plot(t, spd, label='$||v(t)||$')
-    ax.set_xlabel('wall time')
-    ax.set_ylabel('position')
-    ax.legend()
-    ax.set_title('Ego Ped over %s seconds' % duration)
+    # Make some pretty plots.
+    # fig, ax = plt.subplots()
+    # get_spd = lambda d: d.velx**2 + d.vely**2 + d.velz**2
+    # spd = [get_spd(d) for d in ego_peds]
+    # t = [d.wall_time for d in ego_peds]
+    # ax.plot(x_ego, y_ego, 'k-')
+    # fig.colorbar(
+    #     ax.scatter(x_ego, y_ego, c=t, alpha=.5),
+    #     ax=ax,
+    #     label="wall time"
+    # )
+    # ax.set_xlabel('$x$')
+    # ax.set_ylabel('$y$')
+    # ax.set_aspect('equal')
+    # duration = max(t) - min(t)
+    # ax.set_title('Ego Ped over %s seconds' % duration)
+
+    # fig, ax = plt.subplots()
+    # ax.plot(t, x_ego, label='$x(t)$')
+    # ax.plot(t, y_ego, label='$y(t)$')
+    # ax.plot(t, spd, label='$||v(t)||$')
+    # ax.set_xlabel('wall time')
+    # ax.set_ylabel('position')
+    # ax.legend()
+    # ax.set_title('Ego Ped over %s seconds' % duration)
 
 
     
 
     if plot_3d:
-        fig = plt.figure()
+        fig = plt.figure(figsize=(8, 6))
         ax = fig.add_subplot(111, projection='3d')
     else:
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(figsize=(8, 6))
 
-    for ent_data, ent_type in zip(
-        [[d for d in data if d.is_vehicle], 
-         [d for d in data if not d.is_vehicle]],
-        ["vehicle", "non-vehicle"]
-        ):
-        x = [d.posx for d in ent_data]
-        y = [d.posy for d in ent_data]
-        if plot_3d:
-            z = [d.posz for d in ent_data]
+    ent_datas = {
+        'vehicle': [d for d in data if d.is_vehicle], 
+        'non-vehicle': [d for d in data if not d.is_vehicle],
+    }
+
+    unique_ids = {
+        k: list(sorted(set([d.id for d in ent_datas[k]])))
+        for k in ent_datas.keys()
+    }
+    entity_ids = {
+        k: [unique_ids[k].index(d.id) for d in ent_datas[k]]
+        for k in ent_datas.keys()
+    }
+
+    for ent_type in ["vehicle", "non-vehicle"]:
+        # x = [d.posx for d in ent_data]
+        # y = [d.posy for d in ent_data]
+        # if plot_3d:
+        #     z = [d.posz for d in ent_data]
+        ent_data = ent_datas[ent_type]
         t = [d.wall_time for d in ent_data]
+        
         veh = ent_type == "vehicle"
+        offset_per_id = np.random.normal(scale=.1, size=(len(unique_ids[ent_type]), 3))
+        x = [d.posx + offset_per_id[unique_ids[ent_type].index(d.id)][0] for d in ent_data]
+        y = [d.posy + offset_per_id[unique_ids[ent_type].index(d.id)][1] for d in ent_data]
+        z = [d.posz + offset_per_id[unique_ids[ent_type].index(d.id)][2] for d in ent_data]
         args = (x, y, z) if plot_3d else (x, y)
         fig.colorbar(
-            ax.scatter(*args, c=t,
+            ax.scatter(*args, 
+
+                #c=t,
+                #cmap='viridis' if veh else 'plasma',
+
+                c=entity_ids[ent_type],
+                cmap='jet',
+
                 marker='o' if veh else 's',
-                s=2 if veh else 5,
+                s=1 if veh else 8,
                 alpha=.9 if veh else .4,
-                cmap='viridis' if veh else 'plasma',
             ),
             ax=ax,
             label='[s] (%s)' % ent_type
@@ -287,8 +309,14 @@ def read_data_main(plot_3d=True, fname="C:\Program Files (x86)\Steam\SteamApps\c
     duration = max(t) - min(t)
     ax.set_title('Entities over %s seconds' % duration)
     
+    from os.path import join, dirname
+    HERE = dirname(__file__)
+    fig_dir = join(HERE, '..', '..', 'doc')
+    fig.tight_layout()
+    fig.savefig(join(fig_dir, 'entity_tracks.png'))
 
     plt.show()
+
 
 
 if __name__ == "__main__":
