@@ -66,6 +66,10 @@ public:
 		return TRUE;
 	}
 
+	void flush() {
+		fh << std::flush;
+	}
+
 };
 
 
@@ -204,7 +208,7 @@ void update(BinaryWriter& binary_writer, std::ofstream& log_file)
 	Vector3 plv = ENTITY::GET_ENTITY_COORDS(playerPed, TRUE);
 	for (int i = 0; i < count; i++)
 	{
-		//binary_writer.saveData(examineEntity(wall_time , i, vehicles[i]));
+		binary_writer.saveData(examineEntity(wall_time , i, vehicles[i]));
 
 		// This model could be useful to put in the packet--"object kind/type"?
 		// There's a mapping (GET_DISPLAY_NAME_FROM_VEHICLE_MODEL) from these to char* names;
@@ -267,6 +271,7 @@ void main()
 	while (true)
 	{
 	    update(binary_writer, log_file);
+		binary_writer.flush();
 		WAIT(0);
 	}
 
