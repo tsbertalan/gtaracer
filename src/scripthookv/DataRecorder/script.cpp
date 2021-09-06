@@ -243,7 +243,6 @@ void update(BinaryWriter& binary_writer, std::ofstream& log_file)
 	Ped peds[ARR_SIZE];
 	count = worldGetAllPeds(peds, ARR_SIZE);
 	wall_time = get_wall_time();
-	//log_file << "Found " << count << " peds total." << std::endl << std::flush;
 
 	for (int i = 0; i < count; i++) {
 		//client.sendData(examineEntity(wall_time, i, peds[i]));
@@ -266,7 +265,7 @@ void main()
 
 	BinaryWriter binary_writer("GTA_recording.bin", log_file);
 
-	log_file << "Each struct will have size " << sizeof(EntityState) << "." << std::endl;
+	log_file << "Each struct will have size " << sizeof(EntityState) << ", followed by a checksum byte." << std::endl;
 
 	while (true)
 	{

@@ -147,7 +147,7 @@ def read_data(fname):
     with open(fname, "rb") as f:
         bytes = f.read()
 
-        pbar = tqdm(total=len(bytes)/1024., unit='kbytes')
+        pbar = tqdm(total=len(bytes)/1024., unit='kbytes', desc='Reading loaded file')
         i = 0
         while True:
 
@@ -244,8 +244,14 @@ def read_data_main(fname="C:\Program Files (x86)\Steam\SteamApps\common\Grand Th
         x = [d.posx for d in ent_data]
         y = [d.posy for d in ent_data]
         t = [d.wall_time for d in ent_data]
+        veh = ent_type == "vehicle"
         fig.colorbar(
-            ax.scatter(x, y, c=t, marker='o' if ent_type == "vehicle" else 'x'),
+            ax.scatter(x, y, c=t,
+                marker='o' if veh else 's',
+                s=2 if veh else 5,
+                alpha=.9 if veh else .4,
+                cmap='viridis' if veh else 'plasma',
+            ),
             ax=ax,
             label='[s] (%s)' % ent_type
         )
