@@ -3,12 +3,14 @@ Read a stream of entity state structs from a file.
 
 Later, we might want to read from a network socket instead.
 """
-import numbers
+import numbers, numpy as np
 from collections import namedtuple
 from ctypes import c_uint, c_double, c_float, c_bool, Structure, c_char, sizeof
 from tqdm.auto import tqdm
 import struct
 import matplotlib.pyplot as plt
+# Allow for 3D matplotlib plots.
+from mpl_toolkits.mplot3d import Axes3D
 
 
 class EntityState(Structure):
@@ -200,7 +202,7 @@ def read_data(fname):
     return data
         
 
-def read_data_main(fname="C:\Program Files (x86)\Steam\SteamApps\common\Grand Theft Auto V\GTA_recording.bin"):
+def read_data_main(plot_3d=True, fname="C:\Program Files (x86)\Steam\SteamApps\common\Grand Theft Auto V\GTA_recording.bin"):
     data = read_data(fname)
 
     # TODO: Save real ego packets from C++ and read them here. id==0 cannot be trusted.
@@ -208,14 +210,16 @@ def read_data_main(fname="C:\Program Files (x86)\Steam\SteamApps\common\Grand Th
 
     # Make some pretty plots.
     fig, ax = plt.subplots()
-    x = [d.posx for d in ego_peds]
-    y = [d.posy for d in ego_peds]
+    x_ego = [d.posx for d in ego_peds]
+    y_ego = [d.posy for d in ego_peds]
+    if plot_3d:
+        z_ego = [d.posz for d in ego_peds]
     get_spd = lambda d: d.velx**2 + d.vely**2 + d.velz**2
     spd = [get_spd(d) for d in ego_peds]
     t = [d.wall_time for d in ego_peds]
-    ax.plot(x, y, 'k-')
+    ax.plot(x_ego, y_ego, 'k-')
     fig.colorbar(
-        ax.scatter(x, y, c=t, alpha=.5),
+        ax.scatter(x_ego, y_ego, c=t, alpha=.5),
         ax=ax,
         label="wall time"
     )
@@ -226,8 +230,8 @@ def read_data_main(fname="C:\Program Files (x86)\Steam\SteamApps\common\Grand Th
     ax.set_title('Ego Ped over %s seconds' % duration)
 
     fig, ax = plt.subplots()
-    ax.plot(t, x, label='$x(t)$')
-    ax.plot(t, y, label='$y(t)$')
+    ax.plot(t, x_ego, label='$x(t)$')
+    ax.plot(t, y_ego, label='$y(t)$')
     ax.plot(t, spd, label='$||v(t)||$')
     ax.set_xlabel('wall time')
     ax.set_ylabel('position')
@@ -235,7 +239,14 @@ def read_data_main(fname="C:\Program Files (x86)\Steam\SteamApps\common\Grand Th
     ax.set_title('Ego Ped over %s seconds' % duration)
 
 
-    fig, ax = plt.subplots()
+    
+
+    if plot_3d:
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+    else:
+        fig, ax = plt.subplots()
+
     for ent_data, ent_type in zip(
         [[d for d in data if d.is_vehicle], 
          [d for d in data if not d.is_vehicle]],
@@ -243,10 +254,13 @@ def read_data_main(fname="C:\Program Files (x86)\Steam\SteamApps\common\Grand Th
         ):
         x = [d.posx for d in ent_data]
         y = [d.posy for d in ent_data]
+        if plot_3d:
+            z = [d.posz for d in ent_data]
         t = [d.wall_time for d in ent_data]
         veh = ent_type == "vehicle"
+        args = (x, y, z) if plot_3d else (x, y)
         fig.colorbar(
-            ax.scatter(x, y, c=t,
+            ax.scatter(*args, c=t,
                 marker='o' if veh else 's',
                 s=2 if veh else 5,
                 alpha=.9 if veh else .4,
@@ -255,9 +269,21 @@ def read_data_main(fname="C:\Program Files (x86)\Steam\SteamApps\common\Grand Th
             ax=ax,
             label='[s] (%s)' % ent_type
         )
+        if plot_3d:
+            center_x = np.mean(x_ego)
+            center_y = np.mean(y_ego)
+            center_z = np.mean(z_ego)
+            radius = 150
+            ax.set_xlim(center_x - radius, center_x + radius)
+            ax.set_ylim(center_y - radius, center_y + radius)
+            ax.set_zlim(center_z - radius, center_z + radius)
+
     ax.set_xlabel('$x$')
     ax.set_ylabel('$y$')
-    ax.set_aspect('equal')
+    if plot_3d:
+        ax.set_zlabel('$z$')
+    else:
+        ax.set_aspect('equal')
     duration = max(t) - min(t)
     ax.set_title('Entities over %s seconds' % duration)
     
