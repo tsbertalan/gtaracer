@@ -48,9 +48,9 @@ class EntityState(Structure):
 
         # Euler angles in the world frame (right)?
         # TODO: check frames.
-        ("roll", c_float),
+        ("roll",  c_float),
         ("pitch", c_float),
-        ("yaw", c_float),
+        ("yaw",   c_float),
 
         # Velocity
         ("velx", c_float),
@@ -146,6 +146,8 @@ def read_data(fname):
     item_size = struct.calcsize(structure_code)
     skip_size = sizeof(EntityState)
     assert skip_size >= item_size
+    
+    num_misses = 0
 
     with open(fname, "rb") as f:
         bytes = f.read()
@@ -165,6 +167,7 @@ def read_data(fname):
             # Check for a marker.
             if not full_chunk.startswith(marker):
                 # Skip ahead until the next start marker.
+                num_misses += 1
                 offset = bytes[i:].find(marker)
                 if offset != -1:
                     i += offset
@@ -200,6 +203,9 @@ def read_data(fname):
 
                 # Continue to the next packet.
                 i += skip_size
+    if num_misses > 0:
+        from warnings import warn
+        warn("We had to skip past the expected next packet location %d times." % num_misses)
     return data
         
 
@@ -207,36 +213,48 @@ def read_data_main(plot_3d=False, fname="C:\Program Files (x86)\Steam\SteamApps\
     data = read_data(fname)
 
     # TODO: Save real ego packets from C++ and read them here. id==0 cannot be trusted.
-    ego_peds = [d for d in data if not d.is_vehicle and d.is_player]
+    # is_player = lambda d: d.dist_to_player < 0.1
+    is_player = lambda d: d.is_player
+    ego_peds = [d for d in data if not d.is_vehicle and is_player(d)]
+    ego_vehs = [d for d in data if d.is_vehicle and is_player(d)]
+
     x_ego = [d.posx for d in ego_peds]
     y_ego = [d.posy for d in ego_peds]
     z_ego = [d.posz for d in ego_peds]
 
-    # Make some pretty plots.
-    # fig, ax = plt.subplots()
-    # get_spd = lambda d: d.velx**2 + d.vely**2 + d.velz**2
-    # spd = [get_spd(d) for d in ego_peds]
-    # t = [d.wall_time for d in ego_peds]
-    # ax.plot(x_ego, y_ego, 'k-')
-    # fig.colorbar(
-    #     ax.scatter(x_ego, y_ego, c=t, alpha=.5),
-    #     ax=ax,
-    #     label="wall time"
-    # )
-    # ax.set_xlabel('$x$')
-    # ax.set_ylabel('$y$')
-    # ax.set_aspect('equal')
-    # duration = max(t) - min(t)
-    # ax.set_title('Ego Ped over %s seconds' % duration)
+    x_ego_veh = [d.posx for d in ego_vehs]
+    y_ego_veh = [d.posy for d in ego_vehs]
+    z_ego_veh = [d.posz for d in ego_vehs]
 
-    # fig, ax = plt.subplots()
-    # ax.plot(t, x_ego, label='$x(t)$')
-    # ax.plot(t, y_ego, label='$y(t)$')
-    # ax.plot(t, spd, label='$||v(t)||$')
-    # ax.set_xlabel('wall time')
-    # ax.set_ylabel('position')
-    # ax.legend()
-    # ax.set_title('Ego Ped over %s seconds' % duration)
+
+    # Make some pretty plots.
+    fig, ax = plt.subplots()
+    t = [d.wall_time for d in ego_peds]
+    ax.plot(x_ego, y_ego, 'k-', label='ped')
+    ax.plot(x_ego_veh, y_ego_veh, 'r-', linewidth=12, alpha=.5, label='vehicle')
+    ax.legend()
+    fig.colorbar(
+        ax.scatter(x_ego, y_ego, c=t, alpha=.5),
+        ax=ax,
+        label="wall time"
+    )
+    ax.set_xlabel('$x$')
+    ax.set_ylabel('$y$')
+    ax.set_aspect('equal')
+    duration = max(t) - min(t)
+    ax.set_title('Ego Ped/Vehicle over %s seconds' % duration)
+    
+
+    fig, ax = plt.subplots()
+    ax.plot(t, x_ego, label='$x(t)$')
+    ax.plot(t, y_ego, label='$y(t)$')
+    get_spd = lambda d: d.velx**2 + d.vely**2 + d.velz**2
+    spd = [get_spd(d) for d in ego_peds]
+    ax.plot(t, spd, label='$||v(t)||$')
+    ax.set_xlabel('wall time')
+    ax.set_ylabel('position')
+    ax.legend()
+    ax.set_title('Ego Ped over %s seconds' % duration)
 
 
     

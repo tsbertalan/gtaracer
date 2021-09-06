@@ -3,22 +3,17 @@
 #include <sstream>
 #include <fstream>
 #include <iomanip>
+#include <chrono>
 
 
-#define DEBUGMODE FALSE
+#define DEBUGMODE TRUE
 
 
 double get_wall_time() {
-	LARGE_INTEGER time, freq;
-	if (!QueryPerformanceFrequency(&freq)) {
-		//  Handle error
-		return 0;
-	}
-	if (!QueryPerformanceCounter(&time)) {
-		//  Handle error
-		return 0;
-	}
-	return (double)time.QuadPart / freq.QuadPart;
+	using namespace std::chrono;
+	steady_clock::time_point now = std::chrono::steady_clock::now();
+	auto us = now.time_since_epoch() / std::chrono::microseconds(1);
+	return us / 1e6;
 }
 
 
@@ -32,12 +27,12 @@ typedef struct EntityState {
 		roll, pitch, yaw,
 		velx, vely, velz,
 		rvelx, rvely, rvelz;
-	double wall_time; // 8
-	float screenx, screeny; // 4*2
-	bool occluded; // 1
-	bool is_vehicle; // 1
+	double wall_time;
+	float screenx, screeny;
+	bool occluded;
+	bool is_vehicle;
+	bool is_player;
 } EntityState;
-
 
 
 char entityStateChecksum(EntityState& es) {
@@ -138,7 +133,7 @@ std::ostringstream formatEntityState(Entity entity) {
 }
 
 
-EntityState examineEntity(double wall_time, int id, Entity entity) {
+EntityState examineEntity(double wall_time, Entity entity, Ped player_ped, Vehicle player_vehicle) {
 	EntityState s;
 	s.wall_time = wall_time;
 
@@ -152,6 +147,7 @@ EntityState examineEntity(double wall_time, int id, Entity entity) {
 	s.posx = p.x;
 	s.posy = p.y;
 	s.posz = p.z;
+	
 
 	Vector3 v = ENTITY::GET_ENTITY_VELOCITY(entity);
 	s.velx = v.x;
@@ -174,18 +170,30 @@ EntityState examineEntity(double wall_time, int id, Entity entity) {
 	s.is_vehicle = ENTITY::IS_ENTITY_A_VEHICLE(entity);
 	if (s.is_vehicle) {
 		s.id = ENTITY::GET_VEHICLE_INDEX_FROM_ENTITY_INDEX(entity);
+		s.is_player = player_vehicle == s.id;
 	}
 	else {
 		s.id = ENTITY::GET_PED_INDEX_FROM_ENTITY_INDEX(entity);
+		s.is_player = player_ped == s.id;
 	}
+
+
+	//s.dist_to_player = GAMEPLAY::GET_DISTANCE_BETWEEN_COORDS(
+	//	player_coords.x, player_coords.y, player_coords.z,
+	//	p.x, p.y, p.z,
+	//	TRUE);
 
 	return s;
 }
 
 
-
-void update(BinaryWriter& binary_writer, std::ofstream& log_file)
+void update(BinaryWriter& binary_writer, std::ofstream& log)
 {
+
+	// TODO: Get more important fields : (1) vehicle type(for example, so we can ignore airplanes easily) (2) ? ? ? (3) profit.
+	// TODO: Use GET_MODEL_DIMENSIONS to get the bounding box for the entity.
+	// TODO: Use some of the CAM namespace actions to get scene information once per update. (E.g., camera FoV and position.)
+
 	double wall_time;
 
 
@@ -196,31 +204,33 @@ void update(BinaryWriter& binary_writer, std::ofstream& log_file)
 	
 	// Get the player.
 	Player player = PLAYER::PLAYER_ID();
-	Ped playerPed = PLAYER::PLAYER_PED_ID();
+	Ped player_ped = PLAYER::PLAYER_PED_ID();
+	Vehicle last_player_vehicle = PLAYER::GET_PLAYERS_LAST_VEHICLE();
 
-
+	
 	// Check if player ped exists and control is on (e.g. not in a cutscene).
-	if (!ENTITY::DOES_ENTITY_EXIST(playerPed) || !PLAYER::IS_PLAYER_CONTROL_ON(player))
+	if (!ENTITY::DOES_ENTITY_EXIST(player_ped) || !PLAYER::IS_PLAYER_CONTROL_ON(player))
 		return;
 
 
 	// Get all vehicles.
 	const int ARR_SIZE = 1024;
 	Vehicle vehicles[ARR_SIZE];
-	int count = worldGetAllVehicles(vehicles, ARR_SIZE);
 	wall_time = get_wall_time();
+	int count = worldGetAllVehicles(vehicles, ARR_SIZE);
 	
-	Vector3 plv = ENTITY::GET_ENTITY_COORDS(playerPed, TRUE);
+	Vector3 plv = ENTITY::GET_ENTITY_COORDS(player_ped, TRUE);
 	for (int i = 0; i < count; i++)
 	{
-		binary_writer.saveData(examineEntity(wall_time , i, vehicles[i]));
-
 		// This model could be useful to put in the packet--"object kind/type"?
 		// There's a mapping (GET_DISPLAY_NAME_FROM_VEHICLE_MODEL) from these to char* names;
 		// we can reproduce that in Python as needed.
 		Hash model = ENTITY::GET_ENTITY_MODEL(vehicles[i]);
 
 		Vector3 v = ENTITY::GET_ENTITY_COORDS(vehicles[i], TRUE);
+
+		binary_writer.saveData(examineEntity(wall_time, vehicles[i], player_ped, last_player_vehicle));
+
 		if (DEBUGMODE) {
 			float x, y;
 			if (GRAPHICS::_WORLD3D_TO_SCREEN2D(v.x, v.y, v.z, &x, &y))
@@ -246,12 +256,12 @@ void update(BinaryWriter& binary_writer, std::ofstream& log_file)
 
 	// Get all peds.
 	Ped peds[ARR_SIZE];
-	count = worldGetAllPeds(peds, ARR_SIZE);
 	wall_time = get_wall_time();
+	count = worldGetAllPeds(peds, ARR_SIZE);
 
 	for (int i = 0; i < count; i++) {
-		//client.sendData(examineEntity(wall_time, i, peds[i]));
-		binary_writer.saveData(examineEntity(wall_time, i, peds[i]));
+		
+		binary_writer.saveData(examineEntity(wall_time, peds[i], player_ped, last_player_vehicle));
 		char text[2048];
 		int ped_type = PED::GET_PED_TYPE(peds[i]);
 		if (DEBUGMODE) {
