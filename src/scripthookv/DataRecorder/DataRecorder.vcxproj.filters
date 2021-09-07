@@ -3,6 +3,7 @@
   <ItemGroup>
     <ClCompile Include="main.cpp" />
     <ClCompile Include="script.cpp" />
+    <ClCompile Include="keyboard.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="script.h" />
@@ -10,6 +11,7 @@
     <ClInclude Include="..\inc\enums.h" />
     <ClInclude Include="..\inc\natives.h" />
     <ClInclude Include="..\inc\types.h" />
+    <ClInclude Include="keyboard.h" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="include">

@@ -1,4 +1,5 @@
 #include "script.h"
+#include "keyboard.h"
 #include <vector>
 #include <sstream>
 #include <fstream>
@@ -6,7 +7,7 @@
 #include <chrono>
 
 
-#define DEBUGMODE TRUE
+#define DEBUGMODE FALSE
 
 
 double get_wall_time() {
@@ -49,20 +50,59 @@ class BinaryWriter {
 private:
 	std::ofstream fh;
 	std::ofstream& log;
+	bool file_opened;
 public:
-	BinaryWriter(char *file_name, std::ofstream& log_file) : log(log_file) {
-		log << "Binary data will be saved to file \"" << file_name << "\"." << std::endl;
-		fh.open(file_name, std::ios::trunc);
+	BinaryWriter(std::ofstream& log_file) : log(log_file) {
+		file_opened = FALSE;
+
+	}
+
+	std::ostringstream generate_filename() {
+		std::ostringstream new_name;
+		new_name << "GTA_recording-" << get_wall_time() << ".bin";
+		return new_name;
+	}
+
+	void open_file(const char *file_name=nullptr) {
+		if (!file_name) {
+			// https://stackoverflow.com/questions/1374468/stringstream-string-and-char-conversion-confusion
+			const std::string& tmp = generate_filename().str();
+			file_name = tmp.c_str();
+		}
+
+		if (!file_opened) {
+			log << "Binary data will be saved to file \"" << file_name << "\"." << std::endl;
+			fh.open(file_name, std::ios::trunc);
+			file_opened = TRUE;
+		}
+	}
+
+	void close_file() {
+		if (file_opened) {
+			log << "Closing open binary file." << std::endl;
+			flush();
+			file_opened = FALSE;
+			fh.close();
+		}
 	}
 
 	bool saveData(EntityState& data) {
-		fh.write(reinterpret_cast<char*>(&data), sizeof(data) - 1);
-		fh << entityStateChecksum(data);
-		return TRUE;
+		if(file_opened){
+			fh.write(reinterpret_cast<char*>(&data), sizeof(data) - 1);
+			fh << entityStateChecksum(data);
+			return TRUE;
+		}
+		else {
+			log << "File is not open; refusing to save new data." << std::endl;
+			return FALSE;
+		}
+
 	}
 
 	void flush() {
-		fh << std::flush;
+		if (file_opened) {
+			fh << std::flush;
+		}
 	}
 
 };
@@ -187,8 +227,29 @@ EntityState examineEntity(double wall_time, Entity entity, Ped player_ped, Vehic
 }
 
 
-void update(BinaryWriter& binary_writer, std::ofstream& log)
+void update(BinaryWriter& binary_writer, std::ofstream& log, bool& is_currently_recording, bool& first_keyhit_seen)
 {
+	if (IsKeyDown(VK_NUMPAD1)) {
+		if (!first_keyhit_seen) { // Only detect actual down changes; don't repeat while down.
+			if (is_currently_recording) {
+				// If we're currently recording, stop.
+				binary_writer.close_file();
+			}
+			else {
+				binary_writer.open_file();
+			}
+			is_currently_recording = !is_currently_recording;
+			first_keyhit_seen = TRUE;
+		}
+	}
+	else {
+		first_keyhit_seen = FALSE;
+	}
+
+
+	if (is_currently_recording) {
+
+	
 
 	// TODO: Get more important fields : (1) vehicle type(for example, so we can ignore airplanes easily) (2) ? ? ? (3) profit.
 	// TODO: Use GET_MODEL_DIMENSIONS to get the bounding box for the entity.
@@ -270,26 +331,31 @@ void update(BinaryWriter& binary_writer, std::ofstream& log)
 			drawTextOnObject(text, peds[i], 0.025f);
 		}
 	}
+	}
 }
 
 
 void main()
 {		
-	std::ofstream log_file;
-	log_file.open("GTA_recording.log", std::ios_base::app);
+	std::ofstream log;
+	log.open("GTA_recording.log", std::ios_base::app);
 
-	BinaryWriter binary_writer("GTA_recording.bin", log_file);
+	BinaryWriter binary_writer(log);
 
-	log_file << "Each struct will have size " << sizeof(EntityState) << ", followed by a checksum byte." << std::endl;
+	if(DEBUGMODE)
+		log << "Each struct will have size " << sizeof(EntityState) << ", followed by a checksum byte." << std::endl;
+
+	bool recording_state = FALSE;
+	bool key_toggling = FALSE;
 
 	while (true)
 	{
-	    update(binary_writer, log_file);
+	    update(binary_writer, log, recording_state, key_toggling);
 		binary_writer.flush();
 		WAIT(0);
 	}
 
-	log_file.close();
+	log.close();
 }
 
 
