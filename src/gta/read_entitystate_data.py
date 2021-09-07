@@ -6,6 +6,7 @@ Later, we might want to read from a network socket instead.
 import numbers, numpy as np
 from collections import namedtuple
 from ctypes import c_uint, c_int, c_double, c_float, c_bool, Structure, c_char, sizeof
+from numpy.lib.arraysetops import isin
 from tqdm.auto import tqdm
 import struct
 import matplotlib.pyplot as plt
@@ -92,7 +93,9 @@ for field_name, field_type in EntityState._fields_:
         c_char: 'c',
         c_int: 'i',
     }[field_type]
-    
+
+constant_fields = 'is_player', 'is_vehicle', 'm1', 'm2', 'm3'
+
 EntityStateTuple = namedtuple("EntityStateTuple", [field_name for field_name, unused_field_type in EntityState._fields_])
 
 
@@ -111,7 +114,7 @@ def xorchecksum(data):
     return checksum
 
 
-def is_valid(entity_state, max_abs=1e10):
+def is_valid(entity_state, max_abs=1e7):
     """A crude additional check of whether a packet is reasonable.
     
     TODO: Figure out what's causing unreasonable packets, that still have a valid checksum.
@@ -204,51 +207,302 @@ def read_data(fname):
         from warnings import warn
         warn("We had to skip past the expected next packet location %d times." % num_misses)
     return data
+
+
+class Track:
+    def __init__(self, **interpolation_options):
+        interpolation_options.setdefault('kind', 'cubic')
+        self.interpolators = {}
+        self._entities = []
+        self.interpolation_options = interpolation_options
+
+    @property
+    def duration(self):
+        return self.tmax - self.tmin
+
+    def __len__(self):
+        return self.count
+
+    @property
+    def count(self):
+        return len(self._entities)
+
+    def get_interpolated_state(self, wall_time):
+        return EntityStateTuple(*[self.get_interpolator(k)(wall_time) for (k, unused_field_type) in EntityState._fields_])
+
+    def get(self, field, time):
+        return self.get_interpolator(field)(time)
+
+    def associate(self, entity, unaffinity_threshold=5.0):
+        """Associate an entity with this track."""
+        if self.unaffinity(entity) > unaffinity_threshold:
+            return False
+        else:
+            self._entities.append(entity)
+            self._entities.sort(key=lambda e: e.wall_time)
+            self._clear_caches()
+            return True
+
+    def unaffinity(self, entity, which=-1):
+        """Return the distance between this entity and a chosen entity in this track."""
+        if len(self._entities) == 0:
+            return 0.0
+        if isinstance(which, str) and which == 'min':
+            return min(entity_unaffinity(e, entity) for e in self._entities)
+        else:
+            assert isinstance(which, int)
+            return entity_unaffinity(self._entities[which], entity)
+
+    def _get_data(self, field):
+        return np.array([getattr(entity_state, field) for entity_state in self._entities])
+
+    @property
+    def times(self):
+        return self._get_data('wall_time')
+
+    @property
+    def tmin(self):
+        return min(self.times)
+
+    @property
+    def tmax(self):
+        return max(self.times)
+
+    def get_interpolator(self, field):
+        """Return an interpolator for the given field."""
+        check_datum = self._get_data(field)[0]
+        if isinstance(check_datum, numbers.Number):
+            from scipy.interpolate  import interp1d
+            Interpolator = interp1d
+        else:
+            Interpolator = NearestFetcher
+
+        if field not in self.interpolators:
+            if field in constant_fields:
+                assert len(list(set(self._get_data(field)))) == 1
+            self.interpolators[field] = ScalarInterpolator(
+                Interpolator, self.times, self._get_data(field), **self.interpolation_options
+            )
+        return self.interpolators[field]
+
+    def _clear_caches(self):
+        self.interpolators = {}
+
+    @property
+    def is_player(self):
+        return self._entities[0].is_player
+
+    @property
+    def is_vehicle(self):
+        return self._entities[0].is_vehicle
+
+
+def entity_unaffinity(entity_state1, entity_state2):
+    """Return the distance between two entity states."""
+    checked_fields = 'wall_time', 'posx', 'posy', 'posz', 'is_vehicle', 'is_player'
+    weights        = np.array([1.0, 1.0,    1.0,    1.0,    10.0,    10.0])
+    v1 = np.array([getattr(entity_state1, field) for field in checked_fields])
+    v2 = np.array([getattr(entity_state2, field) for field in checked_fields])
+    e = v1 - v2
+    return np.linalg.norm(e * weights)
+    
+
+class NearestFetcher:
+
+    def __init__(self, x, y, **ignored_kwargs):
+        self.x = np.array(x)
+        order = np.argsort(self.x)
+        self.x = self.x[order]
+        self.y = [y[i] for i in order]
+
+    def __call__(self, new_x):
+        closest = np.argmin(np.abs(new_x - self.x))
+        return self.y[closest]
+
+
+class ScalarInterpolator:
+
+    def __init__(self, BaseInterpolator, x, y, **kw):
+        if len(x) < 2:
+            BaseInterpolator = NearestFetcher
+        else:
+            min_points = {1: 'nearest', 2: 'linear', 3: 'quadratic', 4: 'cubic'}
+            kw.setdefault('kind', 'cubic')
+            n = len(x)
+            assert n == len(y)
+            kind = min_points.get(n, kw['kind'])
+            if kind != kw['kind']:
+                from warnings import warn
+                warn("ScalarInterpolator: changing interpolation kind from %s to %s because we only have %d points." % (kw['kind'], kind, n))
+            
+            kw['kind'] = kind
         
+        
+        assert len(x) == len(y)
+        self.base_interpolator = BaseInterpolator(x, y, **kw)
+        
+    def __call__(self, new_x):
+        new_y = self.base_interpolator(new_x)
+        if not isinstance(new_x, np.ndarray) and isinstance(new_y, np.ndarray):
+            new_y = np.atleast_1d(new_y)[0]
+        return new_y
 
-def read_data_main(plot_3d=False, fname="C:\Program Files (x86)\Steam\SteamApps\common\Grand Theft Auto V\GTA_recording.bin"):
+
+class TrackManager:
+
+    def __init__(self, entities=None, pbar=True):
+        self.trackgroups = {}
+        if entities is not None:
+            for entity in entities if not pbar else tqdm(entities, unit='entities', desc='Associating entities with tracks'):
+                self.associate(entity)
+
+    def associate(self, entity):
+        associated = False
+        if entity.id not in self.trackgroups:
+            self.trackgroups[entity.id] = [Track()]
+        for track in self.trackgroups[entity.id]:
+            associated = track.associate(entity)
+            if associated:
+                break
+        if not associated:
+            new_track = Track()
+            associated = new_track.associate(entity)
+            self.trackgroups[entity.id].append(new_track)
+        assert associated
+
+    @property
+    def tracks(self):
+        out = []
+        for trackgroup in self.trackgroups.values():
+            out.extend(trackgroup)
+        return out
+
+    def get_active_tracks(self, time):
+        """Return a list of tracks that are active at the given time."""
+        active_tracks = []
+        for track in self.tracks:
+            if track.tmin <= time < track.tmax:
+                active_tracks.append(track)
+        return active_tracks
+
+    @property
+    def tmin(self):
+        return min([track.tmin for track in self.tracks])
+
+    @property
+    def tmax(self):
+        return max([track.tmax for track in self.tracks])
+
+    @property
+    def player_ped(self):
+        return self._get_first_track_by_prop(test=lambda track: track.is_player and not track.is_vehicle)
+
+    @property
+    def player_veh(self):
+        return self._get_first_track_by_prop(test=lambda track: track.is_player and track.is_vehicle)
+    
+    def _get_first_track_by_prop(self, test):
+        player_ped_tracks = [track for track in self.tracks if test(track)]
+        if len(player_ped_tracks) == 0:
+            return None
+        elif len(player_ped_tracks) > 1:
+            from warnings import warn
+            warn(
+                "Multiple %s tracks found. Using the first one. " % test
+            )
+        return player_ped_tracks[0]
+
+def read_data_main(plot_3d=False, fname="C:\Program Files (x86)\Steam\SteamApps\common\Grand Theft Auto V\\"):
+    if fname.endswith('\\') or fname.endswith('/'):
+        from glob import glob
+        binfiles = list(sorted(glob(fname + "GTA_recording*bin")))
+        fname = binfiles[-1]
+        print('Found most recent binfile:', fname)
+
     data = read_data(fname)
-
-    ego_peds = [d for d in data if not d.is_vehicle and d.is_player]
-    ego_vehs = [d for d in data if d.is_vehicle and d.is_player]
-
-    x_ego = [d.posx for d in ego_peds]
-    y_ego = [d.posy for d in ego_peds]
-    z_ego = [d.posz for d in ego_peds]
-
-    x_ego_veh = [d.posx for d in ego_vehs]
-    y_ego_veh = [d.posy for d in ego_vehs]
-    z_ego_veh = [d.posz for d in ego_vehs]
+    track_manager = TrackManager(data)
+    t_mean = (track_manager.tmin + track_manager.tmax) / 2.
+    #active_tracks = track_manager.get_active_tracks(t_mean)
+ 
 
 
     # Make some pretty plots.
-    fig, ax = plt.subplots()
-    t = [d.wall_time for d in ego_peds]
-    ax.plot(x_ego, y_ego, 'k-', label='ped')
-    ax.plot(x_ego_veh, y_ego_veh, 'r-', linewidth=12, alpha=.5, label='vehicle')
-    ax.legend()
-    fig.colorbar(
-        ax.scatter(x_ego, y_ego, c=t, alpha=.5),
-        ax=ax,
-        label="wall time"
-    )
-    ax.set_xlabel('$x$')
-    ax.set_ylabel('$y$')
-    ax.set_aspect('equal')
-    duration = max(t) - min(t)
-    ax.set_title('Ego Ped/Vehicle over %s seconds' % duration)
-    
+    from os.path import join, dirname
+    HERE = dirname(__file__)
+    fig_dir = join(HERE, '..', '..', 'doc')
 
-    fig, ax = plt.subplots()
-    ax.plot(t, x_ego, label='$x(t)$')
-    ax.plot(t, y_ego, label='$y(t)$')
-    get_spd = lambda d: d.velx**2 + d.vely**2 + d.velz**2
-    spd = [get_spd(d) for d in ego_peds]
-    ax.plot(t, spd, label='$||v(t)||$')
-    ax.set_xlabel('wall time')
-    ax.set_ylabel('position')
-    ax.legend()
-    ax.set_title('Ego Ped over %s seconds' % duration)
+    fig, ax = plt.subplots(figsize=(12, 12))
+    ax.set_aspect("equal")
+    for track in track_manager.tracks:
+
+        # Plot the spline.
+        T = np.linspace(track.tmin, track.tmax, 1024)
+        X = track.get('posx', T)
+        Y = track.get('posy', T)
+        style = dict(alpha=.7)
+        if track.is_player:
+            style['linewidth'] = 8
+        if track.is_vehicle:
+            style['linestyle'] = '--'
+        else:
+            style['linestyle'] = '-'
+        line = ax.plot(X, Y, **style)[0]
+
+        # Plot the underlying data.
+        X = track._get_data('posx')
+        Y = track._get_data('posy')
+        ax.scatter(X, Y, color=line._color, s=1)
+
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    vehicle_tracks = [track for track in track_manager.tracks if track.is_vehicle]
+    pla_veh_tracks = [track for track in vehicle_tracks if track.is_player]
+    ped_tracks = [track for track in track_manager.tracks if not track.is_vehicle]
+    pla_ped_tracks = [track for track in ped_tracks if track.is_player]
+    print('Lengths of player ped tracks:', [
+        '%d ents, %.1f sec' % (len(track._entities), track.tmax - track.tmin) for track in pla_ped_tracks
+    ])
+    print('Lengths of player veh tracks:', [
+        '%d ents, %.1f sec' % (len(track._entities), track.tmax - track.tmin) for track in pla_veh_tracks
+    ])
+    fig.suptitle(
+        '{nveh} vehicle tracks, incl. {nvehpla} player\n{nped} pedestrian tracks, incl. {npedpla} player'.format(
+            nveh=len(vehicle_tracks), nvehpla=len(pla_veh_tracks), 
+            nped=len(ped_tracks), npedpla=len(pla_ped_tracks)
+        )
+    )
+    fig.tight_layout()
+    fig.subplots_adjust(top=.9)
+    for ext in ['png', 'pdf']:
+        fig.savefig(join(fig_dir, 'associated_tracks.%s' % ext))
+
+
+    player_veh = track_manager.player_veh
+    if player_veh is not None:
+        fig, ax = plt.subplots()
+        T = np.linspace(player_veh.tmin, player_veh.tmax, 1200)
+        ax.plot(T, player_veh.get('posx', T), label='x')
+        ax.plot(T, player_veh.get('posy', T), label='y')
+        ax.plot(T, player_veh.get('posz', T), label='z')
+        velx = player_veh.get('velx', T)
+        vely = player_veh.get('vely', T)
+        velz = player_veh.get('velz', T)
+        ax.plot(T, velx, label='velx')
+        ax.plot(T, vely, label='vely')
+        ax.plot(T, velz, label='velz')
+        spd = np.sqrt(velx**2 + vely**2 + velz**2)
+        ax.plot(T, spd, label='overall speed (vel mag)')
+        ax.set_xlabel('Time (s)')
+        ax.legend()
+        fig.tight_layout()
+        for ext in ['png', 'pdf']:
+            fig.savefig(join(fig_dir, 'player_vehicle.%s' % ext))
+
+        x_ego = [d.posx for d in player_veh._entities]
+        y_ego = [d.posy for d in player_veh._entities]
+        z_ego = [d.posz for d in player_veh._entities]
+
+
 
 
     
@@ -303,7 +557,7 @@ def read_data_main(plot_3d=False, fname="C:\Program Files (x86)\Steam\SteamApps\
             ax=ax,
             label='[s] (%s)' % ent_type
         )
-        if plot_3d:
+        if plot_3d and player_veh is not None:
             center_x = np.mean(x_ego)
             center_y = np.mean(y_ego)
             center_z = np.mean(z_ego)
@@ -321,9 +575,7 @@ def read_data_main(plot_3d=False, fname="C:\Program Files (x86)\Steam\SteamApps\
     duration = max(t) - min(t)
     ax.set_title('Entities over %s seconds' % duration)
     
-    from os.path import join, dirname
-    HERE = dirname(__file__)
-    fig_dir = join(HERE, '..', '..', 'doc')
+    
     fig.tight_layout()
     fig.savefig(join(fig_dir, 'entity_tracks.png'))
 
