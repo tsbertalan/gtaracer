@@ -114,7 +114,7 @@ def xorchecksum(data):
     return checksum
 
 
-def is_valid(entity_state, max_abs=1e7):
+def is_valid(entity_state, max_abs=1e7, max_abs_xy=1e4):
     """A crude additional check of whether a packet is reasonable.
     
     TODO: Figure out what's causing unreasonable packets, that still have a valid checksum.
@@ -128,6 +128,8 @@ def is_valid(entity_state, max_abs=1e7):
         for val in entity_state:
             if isinstance(val, numbers.Number) and abs(val) > max_abs:
                 return False
+        if abs(entity_state.posx) > max_abs_xy or abs(entity_state.posy) > max_abs_xy:
+            return False
     return True
 
 
@@ -144,10 +146,16 @@ def read_data(fname):
     # As explained above, we'll read chunks of the larger size,
     # but then feed only the smaller first part into struct.unpack().
     item_size = struct.calcsize(structure_code)
-    skip_size = sizeof(EntityState)
-    assert skip_size >= item_size
+    window_size = sizeof(EntityState)
+    assert window_size >= item_size
     
-    num_misses = 0
+    num_skips = 0
+    bytes_skipped = 0
+    num_checkfails = 0
+    num_validfails = 0
+    num_packets_attempted = 0
+    warnable_skipsize = max(abs(window_size - item_size), 3)
+    failures = []
 
     with open(fname, "rb") as f:
         bytes = f.read()
@@ -162,15 +170,18 @@ def read_data(fname):
                 pbar.update(pbar_jump)
             
             # Take a bigger bite.
-            full_chunk = bytes[i:i+skip_size]
+            full_chunk = bytes[i:i+window_size]
 
             # Check for a marker.
             if not full_chunk.startswith(marker):
                 # Skip ahead until the next start marker.
-                num_misses += 1
-                offset = bytes[i:].find(marker)
-                if offset != -1:
-                    i += offset
+                num_skips += 1
+                skip_size = bytes[i:].find(marker)
+                if skip_size > warnable_skipsize:
+                    warn('Larger byte skip encountered (%d bytes).' % (skip_size,))
+                bytes_skipped += skip_size
+                if skip_size != -1:
+                    i += skip_size
                 else:
                     # No more markers; we're done.
                     break
@@ -182,6 +193,7 @@ def read_data(fname):
 
                 # Construct a more convenient form.
                 datum = EntityStateTuple(*datum)
+                num_packets_attempted += 1
 
                 # Check the checksum. Note that the checksum is an
                 # extra byte appended *after* even the larger chunk.
@@ -198,14 +210,62 @@ def read_data(fname):
                 target_checksum = full_chunk[-1]
 
                 # If the packets passes our test, we'll add it to the list.
-                if checksum == target_checksum and is_valid(datum):
-                    data.append(datum)
+                if checksum == target_checksum:
+                    if is_valid(datum):
+                        data.append(datum)
+                        failures.append(0)
+                    else:
+                        num_validfails += 1
+                        failures.append(1)
+                else:
+                    num_checkfails += 1
+                    failures.append(2)
 
                 # Continue to the next packet.
-                i += skip_size
-    if num_misses > 0:
+                i += window_size
+
+    if num_skips > 0 or num_checkfails > 0 or num_validfails > 0:
         from warnings import warn
-        warn("We had to skip past the expected next packet location %d times." % num_misses)
+        msg = '''Some problems encountered while reading file:
+        - Skipped forward %d times (%d cumulative bytes from %d bytes total, or %.2f%%).
+        - %d packets had checksum failures (%.2f%%).
+        - %d packets failed validation despite valid checksum (%.2f%%).''' % (
+            num_skips, bytes_skipped, len(bytes), 100. * bytes_skipped / len(bytes),
+            num_checkfails, 100. * num_checkfails / num_packets_attempted,
+            num_validfails,  100. * num_validfails / num_packets_attempted,
+        )
+        warn(msg)
+
+        # Show the pattern of failures.
+        fig, ax = plt.subplots(figsize=(20, 3))
+
+        # Jitter the locations to make them show up more clearly.
+        failures = np.array(failures)
+        jittered_failures = failures + np.random.normal(loc=0, scale=0.05, size=len(failures))
+        attempt_num = np.arange(len(failures)).astype(float)
+        jittered_attempt_num = attempt_num# + np.random.normal(loc=0, scale=1.0, size=len(attempt_num))
+
+        # Plot all data.
+        ax.scatter(jittered_attempt_num, jittered_failures, marker='|', alpha=.05, color='black')
+
+        # Replot the invalid ones, since they're too few to be seen with light alpha.
+        where_baddat = np.argwhere(failures == 1)
+        ax.scatter(jittered_attempt_num[where_baddat], jittered_failures[where_baddat], color='black', marker='|', alpha=1.0)
+
+        # Make the plot mobeta, and save.
+        ax.set_xlim(0, len(failures))
+        ax.grid(True)
+        ax.set_yticks([0, 1, 2])
+        ax.set_yticklabels(['Success', 'Invalid Data', 'Invalid Checksum'])
+        ax.set_xlabel('Packet Attempt #')
+        ax.set_ylabel('Error Type')
+
+        fig.tight_layout()
+        fig.savefig('%s-data_read_failures.png' % (fname,))
+        plt.show()
+        plt.close(fig)
+
+
     return data
 
 
@@ -412,6 +472,7 @@ class TrackManager:
             )
         return player_ped_tracks[0]
 
+
 def read_data_main(plot_3d=False, fname="C:\Program Files (x86)\Steam\SteamApps\common\Grand Theft Auto V\\"):
     if fname.endswith('\\') or fname.endswith('/'):
         from glob import glob
@@ -473,6 +534,17 @@ def read_data_main(plot_3d=False, fname="C:\Program Files (x86)\Steam\SteamApps\
     )
     fig.tight_layout()
     fig.subplots_adjust(top=.9)
+    center_x = np.median([np.mean(track._get_data('posx')) for track in vehicle_tracks])
+    center_y = np.median([np.mean(track._get_data('posy')) for track in vehicle_tracks])
+    radius = 1000
+    existing_lowx, existing_highx = ax.get_xlim()
+    existing_lowy, existing_highy = ax.get_ylim()
+    new_lowx = max(center_x - radius, existing_lowx)
+    new_highx = min(center_x + radius, existing_highx)
+    new_lowy = max(center_y - radius, existing_lowy)
+    new_highy = min(center_y + radius, existing_highy)
+    ax.set_xlim(new_lowx, new_highx)
+    ax.set_ylim(new_lowy, new_highy)
     for ext in ['png', 'pdf']:
         fig.savefig(join(fig_dir, 'associated_tracks.%s' % ext))
 
@@ -495,6 +567,8 @@ def read_data_main(plot_3d=False, fname="C:\Program Files (x86)\Steam\SteamApps\
         ax.set_xlabel('Time (s)')
         ax.legend()
         fig.tight_layout()
+        ax.set_xlim(new_lowx, new_highx)
+        ax.set_ylim(new_lowy, new_highy)
         for ext in ['png', 'pdf']:
             fig.savefig(join(fig_dir, 'player_vehicle.%s' % ext))
 
@@ -575,7 +649,8 @@ def read_data_main(plot_3d=False, fname="C:\Program Files (x86)\Steam\SteamApps\
     duration = max(t) - min(t)
     ax.set_title('Entities over %s seconds' % duration)
     
-    
+    ax.set_xlim(new_lowx, new_highx)
+    ax.set_ylim(new_lowy, new_highy)
     fig.tight_layout()
     fig.savefig(join(fig_dir, 'entity_tracks.png'))
 
