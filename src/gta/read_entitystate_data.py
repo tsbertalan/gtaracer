@@ -130,17 +130,19 @@ def is_valid(entity_state, max_abs=1e7, max_abs_xy=1e4):
     
     TODO: Figure out what's causing unreasonable packets, that still have a valid checksum.
     """
-    if isinstance(entity_state, EntityState):
-        for field_name, unused_field_type in entity_state._fields_:
-            if abs(getattr(entity_state, field_name)) > max_abs:
-                return False
-    else:
-        assert isinstance(entity_state, EntityStateTuple)
-        for val in entity_state:
-            if isinstance(val, numbers.Number) and abs(val) > max_abs:
-                return False
-        if abs(entity_state.posx) > max_abs_xy or abs(entity_state.posy) > max_abs_xy:
+    # if isinstance(entity_state, EntityState):
+    #     for field_name, unused_field_type in entity_state._fields_:
+    #         if abs(getattr(entity_state, field_name)) > max_abs:
+    #             return False
+    # else:
+    assert isinstance(entity_state, EntityStateTuple)
+    if entity_state.wall_time < 1:
+        return False
+    for val in entity_state:
+        if isinstance(val, numbers.Number) and abs(val) > max_abs:
             return False
+    if abs(entity_state.posx) > max_abs_xy or abs(entity_state.posy) > max_abs_xy:
+        return False
     return True
 
 
