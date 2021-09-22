@@ -66,7 +66,7 @@ public:
 		return new_name;
 	}
 
-	void open_file(const char *file_name=nullptr) {
+	void open_file(const char *file_name = nullptr) {
 		if (!file_name) {
 			// https://stackoverflow.com/questions/1374468/stringstream-string-and-char-conversion-confusion
 			const std::string& tmp = generate_filename().str();
@@ -75,7 +75,7 @@ public:
 
 		if (!file_opened) {
 			log << "Binary data will be saved to file \"" << file_name << "\"." << std::endl;
-			fh.open(file_name, std::ios::trunc);
+			fh.open(file_name, std::ios::out | std::ios::trunc | std::ios::binary);
 			file_opened = TRUE;
 		}
 	}
