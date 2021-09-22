@@ -6,12 +6,19 @@ Later, we might want to read from a network socket instead.
 import numbers, numpy as np
 from collections import namedtuple
 from ctypes import c_uint, c_int, c_double, c_float, c_bool, Structure, c_char, sizeof
-from numpy.lib.arraysetops import isin
 from tqdm.auto import tqdm
 import struct
 import matplotlib.pyplot as plt
 # Allow for 3D matplotlib plots.
 from mpl_toolkits.mplot3d import Axes3D
+from warnings import warn
+from os.path import join, expanduser, dirname
+HOME = expanduser("~")
+HERE = dirname(__file__)
+DATA_DIR = join(HOME, 'data', 'gta', 'velocity_prediction')
+
+from joblib import Memory
+memory = Memory(location=DATA_DIR, verbose=1)
 
 
 class EntityState(Structure):
@@ -137,8 +144,8 @@ def is_valid(entity_state, max_abs=1e7, max_abs_xy=1e4):
     return True
 
 
-
-def read_data(fname):
+@memory.cache
+def read_data(fname, scan=False):
     """Scan through the data and make structs."""
 
     # We'll accumulate structs here.
