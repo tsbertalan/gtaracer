@@ -31,10 +31,14 @@ class EntityState(Structure):
     """
 
     _fields_ = [
-        # A start marker for the beginning of the struct. Always the bytes b'GTA'.
+        # A start marker for the beginning of the struct. Always the bytes b'GTAGTA'.
         ("m1", c_char),
         ("m2", c_char),
         ("m3", c_char),
+        ("m4", c_char),
+        ("m5", c_char),
+        ("m6", c_char),
+
        
         # The entity's non-unique ID in this timestep--just an index 
         # in the list of either vehicles or pedestrians.
@@ -141,7 +145,7 @@ def read_data(fname):
     data = []
 
     # Every struct starts with a 3-byte marker.
-    marker = b'GTA'
+    marker = b'GTAGTA'
 
     # As explained above, we'll read chunks of the larger size,
     # but then feed only the smaller first part into struct.unpack().

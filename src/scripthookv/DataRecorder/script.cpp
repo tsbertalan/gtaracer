@@ -22,6 +22,9 @@ typedef struct EntityState {
 	const char m1 = 'G';
 	const char m2 = 'T';
 	const char m3 = 'A';
+	const char m4 = 'G';
+	const char m5 = 'T';
+	const char m6 = 'A';
 	int id;
 	float
 		posx, posy, posz,
