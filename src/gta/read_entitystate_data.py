@@ -370,12 +370,15 @@ class Track:
 
     def can_merge(self, track, do_plot=False):
         """Return True if the two tracks can be merged."""
-        first, second = self._select_dominant_track(self, track)
+        first = self if self.tmin < track.tmin else track
+        second = self if self is not first else track
         unaffinity = min(
-            first.unaffinity(second.get_interpolated_state(first.tmax)), 
-            second.unaffinity(first.get_interpolated_state(second.tmax))
+            first.unaffinity(second.get_interpolated_state(first.tmax), which=-1), 
+            second.unaffinity(first.get_interpolated_state(second.tmin), which=0)
         )
         possible = unaffinity < first.unaffinity_threshold
+        if possible:
+            print(self, 'can be merged with', track)
         if do_plot and (
             (not first.has_constant_position)
             and
@@ -611,6 +614,78 @@ class TrackManager:
             tested_tracks.sort(key=lambda track: track.duration)
         return tested_tracks[-1]
 
+    def merge_player_tracks(self):
+        tracks = list(sorted(self.tracks, key=lambda track: track.tmin))
+        starting_num_tracks = len(tracks)
+
+        # Identify player vehicles.
+        player_vehicle = None
+        player_ped = None
+
+        new_tracks = []
+        for track in tracks:
+            if track.is_player:
+                if track.is_vehicle:
+                    if player_vehicle is None:
+                        player_vehicle = track
+                    else:
+                        player_vehicle = player_vehicle + track
+                else:
+                    if player_ped is None:
+                        player_ped = track
+                    else:
+                        player_ped = player_ped + track
+                track = None    
+            new_tracks.append(track)
+
+        if player_vehicle is not None:
+            new_tracks.append(player_vehicle)
+        
+        if player_ped is not None:
+            new_tracks.append(player_ped)
+
+        ending_num_tracks = self._delete_merged_tracks(new_tracks)
+
+        assert starting_num_tracks >= ending_num_tracks
+        return starting_num_tracks - ending_num_tracks
+
+    def merge_tracks_by_id(self):
+        tracks = list(sorted(self.tracks, key=lambda track: track.tmin))
+        starting_num_tracks = len(tracks)
+
+        all_ids = set()
+        for track in tracks:
+            all_ids.update(track.ids)
+
+        track_merges = []
+        #pbar = tqdm(total=len(tracks)*len(tracks), unit='pair', desc='Merging tracks by ID')
+        for i, track in enumerate(tracks):
+            this_track_merges = [i]
+            for j, other_track in enumerate(tracks):
+                #pbar.update()
+                if track is other_track:
+                    continue
+                if (
+                    (track.is_vehicle and not other_track.is_vehicle)
+                    or
+                    (not track.is_vehicle and other_track.is_vehicle)
+                ):
+                    continue
+                if (
+                    set(track.ids).intersection(set(other_track.ids)) 
+                    and track.can_merge(other_track)
+                ):
+                    this_track_merges.append(j)
+            track_merges.append(this_track_merges)
+        
+        merge_sets = self._create_merge_sets(track_merges)
+        new_tracks = self._merge_by_mergesets(tracks, merge_sets)
+            
+        ending_num_tracks = self._delete_merged_tracks(new_tracks)
+
+        assert starting_num_tracks >= ending_num_tracks
+        return starting_num_tracks - ending_num_tracks
+
     def merge_tracks_where_possible(self, method='dist'):
         tracks = list(sorted(self.tracks, key=lambda track: track.tmin))
         starting_num_tracks = len(tracks)
@@ -685,39 +760,57 @@ class TrackManager:
                     #    mergees.remove(itrack)
                     track_merges.append(tracks_nearby)
 
-            # Find overlapping sets.
-            merge_sets = []
-            for mergees in track_merges:
-                mergees = set(mergees)
-                has_overlap = False
-                for existing_set in merge_sets:
-                    if existing_set.intersection(mergees):
-                        # There's an overlap; replace the existing set with the union one.
-                        new_set = set(existing_set).union(mergees)
-                        merge_sets.remove(existing_set)
-                        merge_sets.append(new_set)
-                        has_overlap = True
-                if not has_overlap:
-                    merge_sets.append(mergees)
-                    
-            # Do the merging.
-            for i, mergees in enumerate(merge_sets):
-                if len(mergees) > 0:
-                    for j in mergees:
-                        if j != i:
-                            ti = tracks[i]
-                            tj = tracks[j]
-                            if ti is not None and tj is not None:
-                                merged = tracks[i] + tracks[j]
-                                if merged is ti:
-                                    tracks[j] = None
-                                else:
-                                    tracks[i] = None
+            
+            merge_sets = self._create_merge_sets(track_merges)
+            tracks = self._merge_by_mergesets(tracks, merge_sets)
 
+
+        # Remove any tracks that were merged away.
+        ending_num_tracks = self._delete_merged_tracks(tracks)
+
+        assert starting_num_tracks >= ending_num_tracks
+        return starting_num_tracks - ending_num_tracks
+
+    @staticmethod
+    def _create_merge_sets(track_merges):
+        # Find overlapping sets.
+        merge_sets = []
+        for mergees in track_merges:
+            mergees = set(mergees)
+            has_overlap = False
+            for existing_set in merge_sets:
+                if existing_set.intersection(mergees):
+                    # There's an overlap; replace the existing set with the union one.
+                    new_set = set(existing_set).union(mergees)
+                    merge_sets.remove(existing_set)
+                    merge_sets.append(new_set)
+                    has_overlap = True
+            if not has_overlap:
+                merge_sets.append(mergees)
+        return merge_sets
+
+    @staticmethod
+    def _merge_by_mergesets(tracks, merge_sets):
+        # Do the merging.
+        for i, mergees in enumerate(merge_sets):
+            if len(mergees) > 0:
+                for j in mergees:
+                    if j != i:
+                        ti = tracks[i]
+                        tj = tracks[j]
+                        if ti is not None and tj is not None:
+                            merged = tracks[i] + tracks[j]
+                            if merged is ti:
+                                tracks[j] = None
+                            else:
+                                tracks[i] = None
+        return tracks
+
+    def _delete_merged_tracks(self, tracks_or_Nones):
         # Remove any tracks that were merged away.
         new_trackgroups = {}
         ending_num_tracks = 0
-        for track in tracks:
+        for track in tracks_or_Nones:
             if track is None:
                 continue
             ending_num_tracks += 1
@@ -726,10 +819,7 @@ class TrackManager:
                     new_trackgroups[i] = []
                 new_trackgroups[i].append(track)
         self.trackgroups = new_trackgroups
-
-        assert starting_num_tracks >= ending_num_tracks
-        return starting_num_tracks - ending_num_tracks
-
+        return ending_num_tracks
 
     def show_tracks(self, ax=None, plot_3d=False, **kw_plot):
         kw_plot.setdefault('alpha', 0.75)
@@ -777,8 +867,12 @@ def read_data_main(plot_3d=False, fname=join(HOME, 'data', 'gta', 'velocity_pred
     #track_manager.show_tracks(plot_3d=False)
 
     # n_merged = track_manager.merge_tracks_where_possible()
+    n_merged = track_manager.merge_player_tracks()
     # if n_merged:
-    #     print('Merged away', n_merged, 'tracks.')
+    print('Merged away', n_merged, 'player tracks.')
+    # n_merged = track_manager.merge_tracks_by_id()
+    # # if n_merged:
+    # print('Merged away', n_merged, 'tracks by ID.')
 
     #t_mean = (track_manager.tmin + track_manager.tmax) / 2.
     #active_tracks = track_manager.get_active_tracks(t_mean)
@@ -813,8 +907,8 @@ def read_data_main(plot_3d=False, fname=join(HOME, 'data', 'gta', 'velocity_pred
             # Plot the underlying data.
             X = track._get_data('posx')
             Y = track._get_data('posy')
-            ax.scatter(X, Y, color=line._color, s=1, alpha=.1)
-
+            ax.scatter(X, Y, color=line._color, s=1, alpha=.2)
+            
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
         vehicle_tracks = [track for track in track_manager.tracks if len(track) >= minimum_length and track.is_vehicle and not track.has_constant_position]
