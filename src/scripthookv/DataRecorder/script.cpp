@@ -171,7 +171,7 @@ std::ostringstream formatEntityState(Entity entity) {
 	else {
 		text << "not occluded";
 	}
-	
+
 	return text;
 }
 
@@ -190,7 +190,7 @@ EntityState examineEntity(double wall_time, Entity entity, Ped player_ped, Vehic
 	s.posx = p.x;
 	s.posy = p.y;
 	s.posz = p.z;
-	
+
 
 	Vector3 v = ENTITY::GET_ENTITY_VELOCITY(entity);
 	s.velx = v.x;
@@ -201,7 +201,7 @@ EntityState examineEntity(double wall_time, Entity entity, Ped player_ped, Vehic
 	s.rvelx = rvel.x;
 	s.rvely = rvel.y;
 	s.rvelz = rvel.z;
-	
+
 	float xvis = -1;
 	float yvis = -1;
 	if (!GRAPHICS::_WORLD3D_TO_SCREEN2D(p.x, p.y, p.z, &xvis, &yvis)) {
@@ -258,102 +258,102 @@ void update(BinaryWriter& binary_writer, std::ofstream& log, bool& is_currently_
 
 	if (is_currently_recording) {
 
-	// TODO: Get more important fields : (1) vehicle type(for example, so we can ignore airplanes easily) (2) ? ? ? (3) profit.
-	// TODO: Use GET_MODEL_DIMENSIONS to get the bounding box for the entity.
-	// TODO: Use some of the CAM namespace actions to get scene information once per update. (E.g., camera FoV and position.)
+		// TODO: Get more important fields : (1) vehicle type(for example, so we can ignore airplanes easily) (2) ? ? ? (3) profit.
+		// TODO: Use GET_MODEL_DIMENSIONS to get the bounding box for the entity.
+		// TODO: Use some of the CAM namespace actions to get scene information once per update. (E.g., camera FoV and position.)
 
-	double wall_time;
+		double wall_time;
 
 
-	// we don't want to mess with missions in this example
-	if (GAMEPLAY::GET_MISSION_FLAG())
-		return;
+		// we don't want to mess with missions in this example
+		if (GAMEPLAY::GET_MISSION_FLAG())
+			return;
 
 		// If we've gotten this far, we're committed to writing *something*.
 		writing_lock_set = true;
 
-	
-	// Get the player.
-	Player player = PLAYER::PLAYER_ID();
-	Ped player_ped = PLAYER::PLAYER_PED_ID();
-	Vehicle last_player_vehicle = PLAYER::GET_PLAYERS_LAST_VEHICLE();
+
+		// Get the player.
+		Player player = PLAYER::PLAYER_ID();
+		Ped player_ped = PLAYER::PLAYER_PED_ID();
+		Vehicle last_player_vehicle = PLAYER::GET_PLAYERS_LAST_VEHICLE();
 		Vector3 plv = ENTITY::GET_ENTITY_COORDS(player_ped, TRUE);
 
 
-	
-	// Check if player ped exists and control is on (e.g. not in a cutscene).
-	if (!ENTITY::DOES_ENTITY_EXIST(player_ped) || !PLAYER::IS_PLAYER_CONTROL_ON(player))
-		return;
+
+		// Check if player ped exists and control is on (e.g. not in a cutscene).
+		if (!ENTITY::DOES_ENTITY_EXIST(player_ped) || !PLAYER::IS_PLAYER_CONTROL_ON(player))
+			return;
 
 		wall_time = get_wall_time();
 		binary_writer.saveData(examineEntity(wall_time, last_player_vehicle, player_ped, last_player_vehicle));
 
 
-	// Get all vehicles.
-	const int ARR_SIZE = 1024;
-	Vehicle vehicles[ARR_SIZE];
-	wall_time = get_wall_time();
-	int count = worldGetAllVehicles(vehicles, ARR_SIZE);
-	
-	for (int i = 0; i < count; i++)
-	{
-		// This model could be useful to put in the packet--"object kind/type"?
-		// There's a mapping (GET_DISPLAY_NAME_FROM_VEHICLE_MODEL) from these to char* names;
-		// we can reproduce that in Python as needed.
-		Hash model = ENTITY::GET_ENTITY_MODEL(vehicles[i]);
+		// Get all vehicles.
+		const int ARR_SIZE = 1024;
+		Vehicle vehicles[ARR_SIZE];
+		wall_time = get_wall_time();
+		int count = worldGetAllVehicles(vehicles, ARR_SIZE);
 
-		Vector3 v = ENTITY::GET_ENTITY_COORDS(vehicles[i], TRUE);
+		for (int i = 0; i < count; i++)
+		{
+			// This model could be useful to put in the packet--"object kind/type"?
+			// There's a mapping (GET_DISPLAY_NAME_FROM_VEHICLE_MODEL) from these to char* names;
+			// we can reproduce that in Python as needed.
+			Hash model = ENTITY::GET_ENTITY_MODEL(vehicles[i]);
+
+			Vector3 v = ENTITY::GET_ENTITY_COORDS(vehicles[i], TRUE);
 
 			float dist = GAMEPLAY::GET_DISTANCE_BETWEEN_COORDS(plv.x, plv.y, plv.z, v.x, v.y, v.z, TRUE);
 			if (dist < SCAN_DIST) {
-		binary_writer.saveData(examineEntity(wall_time, vehicles[i], player_ped, last_player_vehicle));
+				binary_writer.saveData(examineEntity(wall_time, vehicles[i], player_ped, last_player_vehicle));
 
-		if (DEBUGMODE) {
-			float x, y;
-			if (GRAPHICS::_WORLD3D_TO_SCREEN2D(v.x, v.y, v.z, &x, &y))
-			{
-				int health = ENTITY::GET_ENTITY_HEALTH(vehicles[i]);
-				char *name = VEHICLE::GET_DISPLAY_NAME_FROM_VEHICLE_MODEL(model);
-				// print text in a box
-				char text[2048];		
-				std::ostringstream state_string = formatEntityState(vehicles[i]);
-				sprintf_s(
-					text, 
-					"%s\n%s\nDist %.1f", 
-					name,
-					state_string.str().c_str(),
-					dist
-				);
-				drawTextOnObject(text, vehicles[i]);
+				if (DEBUGMODE) {
+					float x, y;
+					if (GRAPHICS::_WORLD3D_TO_SCREEN2D(v.x, v.y, v.z, &x, &y))
+					{
+						int health = ENTITY::GET_ENTITY_HEALTH(vehicles[i]);
+						char *name = VEHICLE::GET_DISPLAY_NAME_FROM_VEHICLE_MODEL(model);
+						// print text in a box
+						char text[2048];
+						std::ostringstream state_string = formatEntityState(vehicles[i]);
+						sprintf_s(
+							text,
+							"%s\n%s\nDist %.1f",
+							name,
+							state_string.str().c_str(),
+							dist
+						);
+						drawTextOnObject(text, vehicles[i]);
+					}
+				}
 			}
-		}
-	}
 
 		}
 
 
-	// Get all peds.
-	Ped peds[ARR_SIZE];
-	wall_time = get_wall_time();
-	count = worldGetAllPeds(peds, ARR_SIZE);
+		// Get all peds.
+		Ped peds[ARR_SIZE];
+		wall_time = get_wall_time();
+		count = worldGetAllPeds(peds, ARR_SIZE);
 
-	for (int i = 0; i < count; i++) {
-		
+		for (int i = 0; i < count; i++) {
+
 			Vector3 v = ENTITY::GET_ENTITY_COORDS(peds[i], TRUE);
 			float dist = GAMEPLAY::GET_DISTANCE_BETWEEN_COORDS(plv.x, plv.y, plv.z, v.x, v.y, v.z, TRUE);
 			bool in_car = PED::IS_PED_IN_ANY_VEHICLE(peds[i], FALSE);
 			if (dist < SCAN_DIST && !in_car) {
 
-		binary_writer.saveData(examineEntity(wall_time, peds[i], player_ped, last_player_vehicle));
+				binary_writer.saveData(examineEntity(wall_time, peds[i], player_ped, last_player_vehicle));
 
 				if (DEBUGMODE) {
-		char text[2048];
-		int ped_type = PED::GET_PED_TYPE(peds[i]);
-			std::ostringstream state_string = formatEntityState(peds[i]);
-			sprintf_s(text, "Ped #%d (type %d)\n%s", i, ped_type, state_string.str().c_str());
-			drawTextOnObject(text, peds[i], 0.025f);
-		}
-	}
+					char text[2048];
+					int ped_type = PED::GET_PED_TYPE(peds[i]);
+					std::ostringstream state_string = formatEntityState(peds[i]);
+					sprintf_s(text, "Ped #%d (type %d)\n%s", i, ped_type, state_string.str().c_str());
+					drawTextOnObject(text, peds[i], 0.025f);
+				}
+			}
 		}
 
 		// Once we're done, we clear the lock.
@@ -363,7 +363,7 @@ void update(BinaryWriter& binary_writer, std::ofstream& log, bool& is_currently_
 
 
 void main()
-{		
+{
 	std::ofstream log;
 	log.open("GTA_recording.log", std::ios_base::app);
 
@@ -389,7 +389,7 @@ void main()
 
 
 void ScriptMain()
-{	
+{
 	srand(GetTickCount());
 	main();
 }
