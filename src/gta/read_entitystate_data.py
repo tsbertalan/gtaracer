@@ -779,8 +779,44 @@ class TrackManager:
         title = 'After Merging (%d tracks)' % len([t for t in tracks if t is not None])
         fig.suptitle(title)
         print(title)
+
+    def show_tracks(self, ax=None, plot_3d=False, **kw_plot):
+        kw_plot.setdefault('alpha', 0.75)
+
+        if ax is None:
+            if not plot_3d:
+                fig, ax = plt.subplots()
+                ax.set_aspect('equal')
+            else:
+                fig = plt.figure()
+                ax = fig.add_subplot(111, projection='3d')
+        
+        for track in self.tracks:
+            x = track._get_data('posx')
+            y = track._get_data('posy')
+            if plot_3d:
+                z = track._get_data('posz')
+                data = x, y, z
+            else:
+                data = x, y
+            ax.plot(*data, **kw_plot)
+            ax.set_xlabel('x')
+            ax.set_ylabel('y')
+            if plot_3d:
+                ax.set_zlabel('z')
+
+        fig.tight_layout()
+
+        return ax.get_figure(), ax
+
+def read_data_main(plot_3d=False, fname=join(HOME, 'data', 'gta', 'velocity_prediction'), search_for_truncated=False):
+    if fname.endswith('\\') or fname.endswith('/') or not fname.endswith('.bin'):
         from glob import glob
-        binfiles = list(sorted(glob(fname + "GTA_recording*bin")))
+        if search_for_truncated:
+            search_path = join(fname, 'GTA_recording*-truncated.bin')
+        else:
+            search_path = join(fname, "GTA_recording*bin")
+        binfiles = list(sorted(glob(search_path)))
         fname = binfiles[-1]
         print('Found most recent binfile:', fname)
 
@@ -792,67 +828,89 @@ class TrackManager:
     #active_tracks = track_manager.get_active_tracks(t_mean)
  
 
-
     # Make some pretty plots.
-    from os.path import join, dirname
-    HERE = dirname(__file__)
     fig_dir = join(HERE, '..', '..', 'doc')
 
-    fig, ax = plt.subplots(figsize=(12, 12))
-    ax.set_aspect("equal")
-    for track in track_manager.tracks:
+    for minimum_length in 10,:
+        fig, ax = plt.subplots(figsize=(12, 12))
+        ax.set_aspect("equal")
+        for track in track_manager.tracks:
 
-        # Plot the spline.
-        T = np.linspace(track.tmin, track.tmax, 1024)
-        X = track.get('posx', T)
-        Y = track.get('posy', T)
-        style = dict(alpha=.7)
-        if track.is_player:
-            style['linewidth'] = 8
-        if track.is_vehicle:
-            style['linestyle'] = '--'
-        else:
-            style['linestyle'] = '-'
-        line = ax.plot(X, Y, **style)[0]
+            if len(track) < minimum_length or track.has_constant_position:
+                continue
 
-        # Plot the underlying data.
-        X = track._get_data('posx')
-        Y = track._get_data('posy')
-        ax.scatter(X, Y, color=line._color, s=1)
+            # Plot the spline.
+            T = np.linspace(track.tmin, track.tmax, 1024)
+            X = track.get('posx', T)
+            Y = track.get('posy', T)
+            style = dict(alpha=.7)
+            if track.is_player:
+                style['linewidth'] = 8
 
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    vehicle_tracks = [track for track in track_manager.tracks if track.is_vehicle]
-    pla_veh_tracks = [track for track in vehicle_tracks if track.is_player]
-    ped_tracks = [track for track in track_manager.tracks if not track.is_vehicle]
-    pla_ped_tracks = [track for track in ped_tracks if track.is_player]
-    print('Lengths of player ped tracks:', [
-        '%d ents, %.1f sec' % (len(track._entities), track.tmax - track.tmin) for track in pla_ped_tracks
-    ])
-    print('Lengths of player veh tracks:', [
-        '%d ents, %.1f sec' % (len(track._entities), track.tmax - track.tmin) for track in pla_veh_tracks
-    ])
-    fig.suptitle(
-        '{nveh} vehicle tracks, incl. {nvehpla} player\n{nped} pedestrian tracks, incl. {npedpla} player'.format(
-            nveh=len(vehicle_tracks), nvehpla=len(pla_veh_tracks), 
-            nped=len(ped_tracks), npedpla=len(pla_ped_tracks)
+            if track.is_vehicle:
+                style['linestyle'] = '--'
+            else:
+                style['linestyle'] = '-'
+                
+            line = ax.plot(X, Y, **style)[0]
+
+            # Plot the underlying data.
+            X = track._get_data('posx')
+            Y = track._get_data('posy')
+            ax.scatter(X, Y, color=line._color, s=1, alpha=.1)
+
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        vehicle_tracks = [track for track in track_manager.tracks if len(track) >= minimum_length and track.is_vehicle and not track.has_constant_position]
+        pla_veh_tracks = [track for track in vehicle_tracks if len(track) >= minimum_length and track.is_player]
+        ped_tracks = [track for track in track_manager.tracks if not track.is_vehicle and not track.has_constant_position]
+        pla_ped_tracks = [track for track in ped_tracks if track.is_player]
+        print('Lengths of player ped tracks:', [
+            '%d ents, %.1f sec' % (len(track._entities), track.tmax - track.tmin) for track in pla_ped_tracks
+        ])
+        pla_veh_tracks.sort(key=lambda track: track.tmin)
+        print('Lengths of player veh tracks:', [
+            '%d ents, %.1f sec' % (len(track._entities), track.tmax - track.tmin) for track in pla_veh_tracks
+        ])
+
+        if len(pla_veh_tracks) > 1:
+            print('Affinity distances between subsequent (by t0) tracks')
+            track = pla_veh_tracks[0]
+            for i, track2 in enumerate(pla_veh_tracks[1:]):
+                s1 = track._entities[-1]
+                x1 = np.array([getattr(s1, attr) for attr in AFFINITY_KEYS])
+                s2 = track2._entities[0]
+                x2 = np.array([getattr(s2, attr) for attr in AFFINITY_KEYS])
+                dist = np.linalg.norm(x1 - x2)
+                print('%d to %d: %.2f' % (i, i+1, dist))
+                track = track2
+
+        fig.suptitle(
+            '{nveh} vehicle tracks, incl. {nvehpla} player\n{nped} pedestrian tracks, incl. {npedpla} player'.format(
+                nveh=len(vehicle_tracks), nvehpla=len(pla_veh_tracks), 
+                nped=len(ped_tracks), npedpla=len(pla_ped_tracks)
+            )
         )
-    )
-    fig.tight_layout()
-    fig.subplots_adjust(top=.9)
-    center_x = np.median([np.mean(track._get_data('posx')) for track in vehicle_tracks])
-    center_y = np.median([np.mean(track._get_data('posy')) for track in vehicle_tracks])
-    radius = 1000
-    existing_lowx, existing_highx = ax.get_xlim()
-    existing_lowy, existing_highy = ax.get_ylim()
-    new_lowx = max(center_x - radius, existing_lowx)
-    new_highx = min(center_x + radius, existing_highx)
-    new_lowy = max(center_y - radius, existing_lowy)
-    new_highy = min(center_y + radius, existing_highy)
-    ax.set_xlim(new_lowx, new_highx)
-    ax.set_ylim(new_lowy, new_highy)
-    for ext in ['png', 'pdf']:
-        fig.savefig(join(fig_dir, 'associated_tracks.%s' % ext))
+        fig.tight_layout()
+        fig.subplots_adjust(top=.9)
+        center_x = np.median([np.mean(track._get_data('posx')) for track in vehicle_tracks])
+        center_y = np.median([np.mean(track._get_data('posy')) for track in vehicle_tracks])
+        radius = 1000
+        existing_lowx, existing_highx = ax.get_xlim()
+        existing_lowy, existing_highy = ax.get_ylim()
+        new_lowx = max(center_x - radius, existing_lowx)
+        new_highx = min(center_x + radius, existing_highx)
+        new_lowy = max(center_y - radius, existing_lowy)
+        new_highy = min(center_y + radius, existing_highy)
+        # ax.set_xlim(new_lowx, new_highx)
+        # ax.set_ylim(new_lowy, new_highy)
+        # ax.scatter(
+        #     [track._get_data('posx')[0] for track in track_manager.tracks if len(track) < minimum_length],
+        #     [track._get_data('posy')[0] for track in track_manager.tracks if len(track) < minimum_length],
+        #     color='black', s=42, alpha=.8, marker='+',
+        # )
+        for ext in ['png', 'pdf']:
+            fig.savefig(join(fig_dir, 'associated_tracks-minlen_%d.%s' % (minimum_length, ext)))
 
 
     player_veh = track_manager.player_veh
@@ -873,8 +931,8 @@ class TrackManager:
         ax.set_xlabel('Time (s)')
         ax.legend()
         fig.tight_layout()
-        ax.set_xlim(new_lowx, new_highx)
-        ax.set_ylim(new_lowy, new_highy)
+        # ax.set_xlim(new_lowx, new_highx)
+        # ax.set_ylim(new_lowy, new_highy)
         for ext in ['png', 'pdf']:
             fig.savefig(join(fig_dir, 'player_vehicle.%s' % ext))
 
@@ -883,85 +941,81 @@ class TrackManager:
         z_ego = [d.posz for d in player_veh._entities]
 
 
-
-
-    
-
     if plot_3d:
         fig = plt.figure(figsize=(8, 6))
         ax = fig.add_subplot(111, projection='3d')
     else:
         fig, ax = plt.subplots(figsize=(8, 6))
 
-    ent_datas = {
-        'vehicle': [d for d in data if d.is_vehicle], 
-        'non-vehicle': [d for d in data if not d.is_vehicle],
-    }
+    #data = track_manager.tracks
 
-    unique_ids = {
-        k: list(sorted(set([d.id for d in ent_datas[k]])))
-        for k in ent_datas.keys()
-    }
-    entity_ids = {
-        k: [unique_ids[k].index(d.id) for d in ent_datas[k]]
-        for k in ent_datas.keys()
-    }
+    # ent_datas = {
+    #     'vehicle': [d for d in data if d.is_vehicle], 
+    #     'non-vehicle': [d for d in data if not d.is_vehicle],
+    # }
+    # unique_ids = {
+    #     k: list(sorted(set([tuple(d.ids) for d in ent_datas[k]])))
+    #     for k in ent_datas.keys()
+    # }
+    # entity_ids = {
+    #     k: [unique_ids[k].index(tuple(d.ids)) for d in ent_datas[k]]
+    #     for k in ent_datas.keys()
+    # }
 
-    for ent_type in ["vehicle", "non-vehicle"]:
-        # x = [d.posx for d in ent_data]
-        # y = [d.posy for d in ent_data]
-        # if plot_3d:
-        #     z = [d.posz for d in ent_data]
-        ent_data = ent_datas[ent_type]
-        t = [d.wall_time for d in ent_data]
+    # for ent_type in ["vehicle", "non-vehicle"]:
+    #     # x = [d.posx for d in ent_data]
+    #     # y = [d.posy for d in ent_data]
+    #     # if plot_3d:
+    #     #     z = [d.posz for d in ent_data]
+    #     ent_data = ent_datas[ent_type]
+    #     t = [d.times for d in ent_data]
         
-        veh = ent_type == "vehicle"
-        offset_per_id = np.random.normal(scale=.1, size=(len(unique_ids[ent_type]), 3))
-        x = [d.posx + offset_per_id[unique_ids[ent_type].index(d.id)][0] for d in ent_data]
-        y = [d.posy + offset_per_id[unique_ids[ent_type].index(d.id)][1] for d in ent_data]
-        z = [d.posz + offset_per_id[unique_ids[ent_type].index(d.id)][2] for d in ent_data]
-        args = (x, y, z) if plot_3d else (x, y)
-        fig.colorbar(
-            ax.scatter(*args, 
+    #     veh = ent_type == "vehicle"
+    #     offset_per_id = np.random.normal(scale=.1, size=(len(unique_ids[ent_type]), 3))
+    #     x = [d.posx + offset_per_id[unique_ids[ent_type].index(d.id)][0] for d in ent_data]
+    #     y = [d.posy + offset_per_id[unique_ids[ent_type].index(d.id)][1] for d in ent_data]
+    #     z = [d.posz + offset_per_id[unique_ids[ent_type].index(d.id)][2] for d in ent_data]
+    #     args = (x, y, z) if plot_3d else (x, y)
+    #     fig.colorbar(
+    #         ax.scatter(*args, 
 
-                #c=t,
-                #cmap='viridis' if veh else 'plasma',
+    #             #c=t,
+    #             #cmap='viridis' if veh else 'plasma',
 
-                c=entity_ids[ent_type],
-                cmap='jet',
+    #             c=entity_ids[ent_type],
+    #             cmap='jet',
 
-                marker='o' if veh else 's',
-                s=1 if veh else 8,
-                alpha=.9 if veh else .4,
-            ),
-            ax=ax,
-            label='[s] (%s)' % ent_type
-        )
-        if plot_3d and player_veh is not None:
-            center_x = np.mean(x_ego)
-            center_y = np.mean(y_ego)
-            center_z = np.mean(z_ego)
-            radius = 150
-            ax.set_xlim(center_x - radius, center_x + radius)
-            ax.set_ylim(center_y - radius, center_y + radius)
-            ax.set_zlim(center_z - radius, center_z + radius)
+    #             marker='o' if veh else 's',
+    #             s=1 if veh else 8,
+    #             alpha=.9 if veh else .4,
+    #         ),
+    #         ax=ax,
+    #         label='[s] (%s)' % ent_type
+    #     )
+    #     if plot_3d and player_veh is not None:
+    #         center_x = np.mean(x_ego)
+    #         center_y = np.mean(y_ego)
+    #         center_z = np.mean(z_ego)
+    #         radius = 150
+    #         ax.set_xlim(center_x - radius, center_x + radius)
+    #         ax.set_ylim(center_y - radius, center_y + radius)
+    #         ax.set_zlim(center_z - radius, center_z + radius)
 
-    ax.set_xlabel('$x$')
-    ax.set_ylabel('$y$')
-    if plot_3d:
-        ax.set_zlabel('$z$')
-    else:
-        ax.set_aspect('equal')
-    duration = max(t) - min(t)
-    ax.set_title('Entities over %s seconds' % duration)
+    # ax.set_xlabel('$x$')
+    # ax.set_ylabel('$y$')
+    # if plot_3d:
+    #     ax.set_zlabel('$z$')
+    # else:
+    #     ax.set_aspect('equal')
+    # duration = max(t) - min(t)
+    # ax.set_title('Entities over %s seconds' % duration)
     
-    ax.set_xlim(new_lowx, new_highx)
-    ax.set_ylim(new_lowy, new_highy)
-    fig.tight_layout()
-    fig.savefig(join(fig_dir, 'entity_tracks.png'))
+    # ax.set_xlim(new_lowx, new_highx)
+    # ax.set_ylim(new_lowy, new_highy)
+    # fig.tight_layout()
+    # fig.savefig(join(fig_dir, 'entity_tracks.png'))
 
     plt.show()
-
 
 
 if __name__ == "__main__":
