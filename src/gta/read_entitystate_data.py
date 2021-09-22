@@ -618,15 +618,15 @@ class TrackManager:
         return self._get_first_track_by_prop(test=lambda track: track.is_player and track.is_vehicle)
     
     def _get_first_track_by_prop(self, test):
-        player_ped_tracks = [track for track in self.tracks if test(track)]
-        if len(player_ped_tracks) == 0:
+        tested_tracks = [track for track in self.tracks if test(track)]
+        if len(tested_tracks) == 0:
             return None
-        elif len(player_ped_tracks) > 1:
-            from warnings import warn
+        elif len(tested_tracks) > 1:
             warn(
-                "Multiple %s tracks found. Using the first one. " % test
+                "Multiple %s tracks found. Using the longest one. " % test
             )
-        return player_ped_tracks[0]
+            tested_tracks.sort(key=lambda track: track.duration)
+        return tested_tracks[-1]
 
 
 def read_data_main(plot_3d=False, fname="C:\Program Files (x86)\Steam\SteamApps\common\Grand Theft Auto V\\"):
