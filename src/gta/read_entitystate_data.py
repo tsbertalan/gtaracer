@@ -564,10 +564,12 @@ def cached_TrackManager_fetch(binfpath):
 
 class TrackManager:
 
-    def __init__(self, entities=None, pbar=True):
+    def __init__(self, entities_or_binfpath=None, pbar=True):
         self.trackgroups = {}
-        if entities is not None:
-            for entity in entities if not pbar else tqdm(entities, unit='entities', desc='Associating entities with tracks'):
+        if entities_or_binfpath is not None:
+            if isinstance(entities_or_binfpath, str):
+                entities_or_binfpath = read_data(entities_or_binfpath)
+            for entity in entities_or_binfpath if not pbar else tqdm(entities_or_binfpath, unit='entities', desc='Associating entities with tracks'):
                 self.associate(entity)
 
     def associate(self, entity):
