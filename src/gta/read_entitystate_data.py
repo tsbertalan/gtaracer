@@ -436,6 +436,31 @@ class Track:
     def ids(self):
         return sorted(list(set([e.id for e in self._entities])))
 
+    def show_track(self, axbx=None, do_legend=True, **kw_plot):
+        if axbx is None:
+            unused_fig, axbx = plt.subplots(ncols=2)
+
+        ax, bx = axbx
+
+        kw_plot.setdefault('label', str(self.ids))
+        line = ax.plot(self._get_data('posx'), self._get_data('posy'), **kw_plot)[0]
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+
+        kw_plot['color'] = line.get_color()
+        bx.plot(self.times, self._get_data('posx'), **kw_plot)
+        bx.set_xlabel('Time')
+        bx.set_ylabel('X')
+
+        if do_legend:
+            ax.legend()
+            bx.legend()
+            
+        fig = ax.get_figure()
+        fig.tight_layout()
+
+        return fig, axbx
+
     @staticmethod
     def _select_dominant_track(track1, track2):
         """Return the dominant track."""
