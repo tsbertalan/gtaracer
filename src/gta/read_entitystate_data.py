@@ -51,8 +51,7 @@ class EntityState(Structure):
         # That is, the combination of ID and the later is_vehicle is unique per time step.
         ("id", c_int),
 
-        # Absolute position in the world--not yet sure about the units.
-        # TODO: check units.
+        # Absolute position in the world in meters.
         ("posx", c_float),
         ("posy", c_float),
         ("posz", c_float),
@@ -63,7 +62,7 @@ class EntityState(Structure):
         ("pitch", c_float),
         ("yaw",   c_float),
 
-        # Velocity
+        # Velocity in meters per second.
         ("velx", c_float),
         ("vely", c_float),
         ("velz", c_float),
@@ -909,8 +908,8 @@ def read_data_main(plot_3d=False, fname=join(HOME, 'data', 'gta', 'velocity_pred
             Y = track._get_data('posy')
             ax.scatter(X, Y, color=line._color, s=1, alpha=.2)
             
-        ax.set_xlabel('X')
-        ax.set_ylabel('Y')
+        ax.set_xlabel('$x$ $[m]$')
+        ax.set_ylabel('$y$ $[m]$')
         vehicle_tracks = [track for track in track_manager.tracks if len(track) >= minimum_length and track.is_vehicle and not track.has_constant_position]
         pla_veh_tracks = [track for track in vehicle_tracks if len(track) >= minimum_length and track.is_player]
         ped_tracks = [track for track in track_manager.tracks if not track.is_vehicle and not track.has_constant_position]
@@ -965,20 +964,31 @@ def read_data_main(plot_3d=False, fname=join(HOME, 'data', 'gta', 'velocity_pred
 
     player_veh = track_manager.player_veh
     if player_veh is not None:
-        fig, ax = plt.subplots()
+        fig, (ax, bx) = plt.subplots(ncols=2, figsize=(12, 6))
         T = np.linspace(player_veh.tmin, player_veh.tmax, 1200)
-        ax.plot(T, player_veh.get('posx', T), label='x')
-        ax.plot(T, player_veh.get('posy', T), label='y')
-        ax.plot(T, player_veh.get('posz', T), label='z')
+        fig.colorbar(
+            bx.scatter(player_veh.get('posx', T), player_veh.get('posy', T), c=player_veh.get('posz', T), s=2, alpha=.9),
+            ax=bx,
+            label='Z'
+        )
+        bx.scatter(player_veh.get('posx', T[0]),  player_veh.get('posy', T[0]),  c='green', label='Start', marker='s', s=42)
+        bx.scatter(player_veh.get('posx', T[-1]), player_veh.get('posy', T[-1]), c='red',   label='End',   marker='s', s=42)
+        bx.set_aspect('equal')
+        bx.legend()
+        bx.set_xlabel('$x$')
+        bx.set_ylabel('$y$')
+        bx.set_title('Position $[m]$')
+
         velx = player_veh.get('velx', T)
         vely = player_veh.get('vely', T)
         velz = player_veh.get('velz', T)
-        ax.plot(T, velx, label='velx')
-        ax.plot(T, vely, label='vely')
-        ax.plot(T, velz, label='velz')
+        ax.plot(T, velx, label='$v_x$')
+        ax.plot(T, vely, label='$v_y$')
+        ax.plot(T, velz, label='$v_z$')
         spd = np.sqrt(velx**2 + vely**2 + velz**2)
-        ax.plot(T, spd, label='overall speed (vel mag)')
-        ax.set_xlabel('Time (s)')
+        ax.plot(T, spd, label='overall speed ($\sqrt{v_x^2 + v_y^2 + v_z^2}$)', linestyle='--')
+        ax.set_title('Velocity or Speed $[m/s]$')
+        ax.set_xlabel('Time $[s]$')
         ax.legend()
         fig.tight_layout()
         # ax.set_xlim(new_lowx, new_highx)
