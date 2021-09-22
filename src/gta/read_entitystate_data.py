@@ -469,7 +469,8 @@ class Track:
     def get_interpolator(self, field):
         """Return an interpolator for the given field."""
         check_datum = self._get_data(field)[0]
-        if isinstance(check_datum, numbers.Number):
+        force_nearest = 'id', 'm1', 'm2', 'm3', 'occluded', 'is_player', 'is_vehicle'
+        if (field not in force_nearest) and isinstance(check_datum, numbers.Number):
             from scipy.interpolate  import interp1d
             Interpolator = interp1d
         else:
@@ -478,8 +479,15 @@ class Track:
         if field not in self.interpolators:
             if field in constant_fields:
                 assert len(list(set(self._get_data(field)))) == 1
+            x = self.times
+            y = self._get_data(field)
+            which = self._nonduplicate_time_indices
+            x = np.array(x)[which]
+            y = np.array(y)[which]
+            self.interpolation_options.setdefault('kind', 'cubic')
+            self.interpolation_options.setdefault('fill_value', 'extrapolate')
             self.interpolators[field] = ScalarInterpolator(
-                Interpolator, self.times, self._get_data(field), **self.interpolation_options
+                Interpolator, x, y, **self.interpolation_options
             )
         return self.interpolators[field]
 
@@ -536,11 +544,9 @@ class ScalarInterpolator:
             assert n == len(y)
             kind = min_points.get(n, kw['kind'])
             if kind != kw['kind']:
-                from warnings import warn
                 warn("ScalarInterpolator: changing interpolation kind from %s to %s because we only have %d points." % (kw['kind'], kind, n))
             
             kw['kind'] = kind
-        
         
         assert len(x) == len(y)
         self.base_interpolator = BaseInterpolator(x, y, **kw)
