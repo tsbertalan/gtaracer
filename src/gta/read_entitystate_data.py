@@ -221,7 +221,7 @@ def read_data(fname):
             #       full chunk
             #                       ^
             #                checksum
-            checksum = xorchecksum(full_chunk[:-1])
+            checksum = xorchecksum(full_chunk[:-2])
             checksum_target = full_chunk[-1]
 
             # If the packets passes our test, we'll add it to the list.
@@ -285,7 +285,7 @@ def read_data(fname):
 
 
 class Track:
-    def __init__(self, unaffinity_threshold=4.0, merge_threshold=0.1, **interpolation_options):
+    def __init__(self, unaffinity_threshold=4.0, merge_threshold=1.5, **interpolation_options):
         interpolation_options.setdefault('kind', 'cubic')
         interpolation_options.setdefault('fill_value', 'extrapolate')
         self.unaffinity_threshold = unaffinity_threshold
@@ -612,11 +612,8 @@ class TrackManager:
         return tested_tracks[-1]
 
     def merge_tracks_where_possible(self, method='dist'):
-        fig, ax = self.show_tracks()
         tracks = list(sorted(self.tracks, key=lambda track: track.tmin))
-        title = 'Before Merging (%d tracks)' % len(tracks)
-        fig.suptitle(title)
-        print(title)
+        starting_num_tracks = len(tracks)
 
         if method == 'brute':
             pbar = tqdm(total=len(tracks)*len(tracks), unit='pair', desc='Merging tracks.')
@@ -627,10 +624,6 @@ class TrackManager:
                     track_j = tracks[j]
                     if i != j and track_i is not None and track_j is not None:
                         if track_i.can_merge(track_j):
-                            # print('Merging track ({tmin1}->{tmax1}; dt={dt1}) with track ({tmin2}->{tmax2}; dt={dt2}).'.format(
-                            #     tmin1=track_i.tmin, tmax1=track_i.tmax, dt1=track_i.duration,
-                            #     tmin2=track_j.tmin, tmax2=track_j.tmax, dt2=track_j.duration,
-                            # ))
                             merged = track_i + track_j
                             if merged is track_i:
                                 tracks[j] = None
@@ -723,19 +716,19 @@ class TrackManager:
 
         # Remove any tracks that were merged away.
         new_trackgroups = {}
+        ending_num_tracks = 0
         for track in tracks:
             if track is None:
                 continue
+            ending_num_tracks += 1
             for i in track.ids:
                 if i not in new_trackgroups:
                     new_trackgroups[i] = []
                 new_trackgroups[i].append(track)
         self.trackgroups = new_trackgroups
 
-        fig, ax = self.show_tracks()
-        title = 'After Merging (%d tracks)' % len([t for t in tracks if t is not None])
-        fig.suptitle(title)
-        print(title)
+        return ending_num_tracks - starting_num_tracks
+
 
     def show_tracks(self, ax=None, plot_3d=False, **kw_plot):
         kw_plot.setdefault('alpha', 0.75)
@@ -780,8 +773,10 @@ def read_data_main(plot_3d=False, fname=join(HOME, 'data', 'gta', 'velocity_pred
     #track_manager = TrackManager(fname)
     track_manager = cached_TrackManager_fetch(fname)
     #track_manager.show_tracks(plot_3d=False)
-    track_manager.merge_tracks_where_possible()
-    t_mean = (track_manager.tmin + track_manager.tmax) / 2.
+    n_merged = track_manager.merge_tracks_where_possible()
+    if n_merged:
+        print('Merged away', n_merged, 'tracks.')
+    #t_mean = (track_manager.tmin + track_manager.tmax) / 2.
     #active_tracks = track_manager.get_active_tracks(t_mean)
  
 
@@ -898,80 +893,7 @@ def read_data_main(plot_3d=False, fname=join(HOME, 'data', 'gta', 'velocity_pred
         z_ego = [d.posz for d in player_veh._entities]
 
 
-    if plot_3d:
-        fig = plt.figure(figsize=(8, 6))
-        ax = fig.add_subplot(111, projection='3d')
-    else:
-        fig, ax = plt.subplots(figsize=(8, 6))
-
-    #data = track_manager.tracks
-
-    # ent_datas = {
-    #     'vehicle': [d for d in data if d.is_vehicle], 
-    #     'non-vehicle': [d for d in data if not d.is_vehicle],
-    # }
-    # unique_ids = {
-    #     k: list(sorted(set([tuple(d.ids) for d in ent_datas[k]])))
-    #     for k in ent_datas.keys()
-    # }
-    # entity_ids = {
-    #     k: [unique_ids[k].index(tuple(d.ids)) for d in ent_datas[k]]
-    #     for k in ent_datas.keys()
-    # }
-
-    # for ent_type in ["vehicle", "non-vehicle"]:
-    #     # x = [d.posx for d in ent_data]
-    #     # y = [d.posy for d in ent_data]
-    #     # if plot_3d:
-    #     #     z = [d.posz for d in ent_data]
-    #     ent_data = ent_datas[ent_type]
-    #     t = [d.times for d in ent_data]
-        
-    #     veh = ent_type == "vehicle"
-    #     offset_per_id = np.random.normal(scale=.1, size=(len(unique_ids[ent_type]), 3))
-    #     x = [d.posx + offset_per_id[unique_ids[ent_type].index(d.id)][0] for d in ent_data]
-    #     y = [d.posy + offset_per_id[unique_ids[ent_type].index(d.id)][1] for d in ent_data]
-    #     z = [d.posz + offset_per_id[unique_ids[ent_type].index(d.id)][2] for d in ent_data]
-    #     args = (x, y, z) if plot_3d else (x, y)
-    #     fig.colorbar(
-    #         ax.scatter(*args, 
-
-    #             #c=t,
-    #             #cmap='viridis' if veh else 'plasma',
-
-    #             c=entity_ids[ent_type],
-    #             cmap='jet',
-
-    #             marker='o' if veh else 's',
-    #             s=1 if veh else 8,
-    #             alpha=.9 if veh else .4,
-    #         ),
-    #         ax=ax,
-    #         label='[s] (%s)' % ent_type
-    #     )
-    #     if plot_3d and player_veh is not None:
-    #         center_x = np.mean(x_ego)
-    #         center_y = np.mean(y_ego)
-    #         center_z = np.mean(z_ego)
-    #         radius = 150
-    #         ax.set_xlim(center_x - radius, center_x + radius)
-    #         ax.set_ylim(center_y - radius, center_y + radius)
-    #         ax.set_zlim(center_z - radius, center_z + radius)
-
-    # ax.set_xlabel('$x$')
-    # ax.set_ylabel('$y$')
-    # if plot_3d:
-    #     ax.set_zlabel('$z$')
-    # else:
-    #     ax.set_aspect('equal')
-    # duration = max(t) - min(t)
-    # ax.set_title('Entities over %s seconds' % duration)
-    
-    # ax.set_xlim(new_lowx, new_highx)
-    # ax.set_ylim(new_lowy, new_highy)
-    # fig.tight_layout()
-    # fig.savefig(join(fig_dir, 'entity_tracks.png'))
-
+   
     plt.show()
 
 
