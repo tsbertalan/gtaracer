@@ -558,6 +558,10 @@ class ScalarInterpolator:
         return new_y
 
 
+@memory.cache
+def cached_TrackManager_fetch(binfpath):
+    return TrackManager(binfpath)
+
 class TrackManager:
 
     def __init__(self, entities=None, pbar=True):
