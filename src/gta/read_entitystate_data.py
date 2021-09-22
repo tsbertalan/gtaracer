@@ -285,7 +285,7 @@ def read_data(fname):
 
 
 class Track:
-    def __init__(self, unaffinity_threshold=4.0, merge_threshold=1.5, **interpolation_options):
+    def __init__(self, unaffinity_threshold=4.0, merge_threshold=0.5, **interpolation_options):
         interpolation_options.setdefault('kind', 'cubic')
         interpolation_options.setdefault('fill_value', 'extrapolate')
         self.unaffinity_threshold = unaffinity_threshold
@@ -727,7 +727,8 @@ class TrackManager:
                 new_trackgroups[i].append(track)
         self.trackgroups = new_trackgroups
 
-        return ending_num_tracks - starting_num_tracks
+        assert starting_num_tracks >= ending_num_tracks
+        return starting_num_tracks - ending_num_tracks
 
 
     def show_tracks(self, ax=None, plot_3d=False, **kw_plot):
@@ -772,10 +773,13 @@ def read_data_main(plot_3d=False, fname=join(HOME, 'data', 'gta', 'velocity_pred
 
     #track_manager = TrackManager(fname)
     track_manager = cached_TrackManager_fetch(fname)
+
     #track_manager.show_tracks(plot_3d=False)
-    n_merged = track_manager.merge_tracks_where_possible()
-    if n_merged:
-        print('Merged away', n_merged, 'tracks.')
+
+    # n_merged = track_manager.merge_tracks_where_possible()
+    # if n_merged:
+    #     print('Merged away', n_merged, 'tracks.')
+
     #t_mean = (track_manager.tmin + track_manager.tmax) / 2.
     #active_tracks = track_manager.get_active_tracks(t_mean)
  
