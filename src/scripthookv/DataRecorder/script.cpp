@@ -8,7 +8,7 @@
 
 
 #define DEBUGMODE FALSE
-
+#define SCAN_DIST 64.0
 
 double get_wall_time() {
 	using namespace std::chrono;
@@ -90,8 +90,8 @@ public:
 	}
 
 	bool saveData(EntityState& data) {
-		if(file_opened){
-			fh.write(reinterpret_cast<char*>(&data), sizeof(data) - 1);
+		if (file_opened) {
+			fh.write(reinterpret_cast<char*>(&data), sizeof(data));
 			fh << entityStateChecksum(data);
 			return TRUE;
 		}
@@ -111,7 +111,7 @@ public:
 };
 
 
-void drawText(char *text, float x, float y, float box_height=0, float box_width=0) {
+void drawText(char *text, float x, float y, float box_height = 0, float box_width = 0) {
 	UI::SET_TEXT_FONT(eFont::FontChaletComprimeCologne);
 	UI::SET_TEXT_SCALE(0.2, 0.2);
 	UI::SET_TEXT_COLOUR(200, 255, 200, 255);
@@ -123,7 +123,7 @@ void drawText(char *text, float x, float y, float box_height=0, float box_width=
 	UI::_ADD_TEXT_COMPONENT_STRING(text);
 	UI::_DRAW_TEXT(x, y);
 	// box
-	if(box_height > 0 && box_width > 0)
+	if (box_height > 0 && box_width > 0)
 		GRAPHICS::DRAW_RECT(x + 0.027f, y + 0.043f, box_width, box_height, 75, 75, 75, 75);
 }
 
@@ -202,7 +202,8 @@ EntityState examineEntity(double wall_time, Entity entity, Ped player_ped, Vehic
 	s.rvely = rvel.y;
 	s.rvelz = rvel.z;
 	
-	float xvis, yvis;
+	float xvis = -1;
+	float yvis = -1;
 	if (!GRAPHICS::_WORLD3D_TO_SCREEN2D(p.x, p.y, p.z, &xvis, &yvis)) {
 		xvis = -1;
 		yvis = -1;
@@ -257,8 +258,6 @@ void update(BinaryWriter& binary_writer, std::ofstream& log, bool& is_currently_
 
 	if (is_currently_recording) {
 
-	
-
 	// TODO: Get more important fields : (1) vehicle type(for example, so we can ignore airplanes easily) (2) ? ? ? (3) profit.
 	// TODO: Use GET_MODEL_DIMENSIONS to get the bounding box for the entity.
 	// TODO: Use some of the CAM namespace actions to get scene information once per update. (E.g., camera FoV and position.)
@@ -278,11 +277,16 @@ void update(BinaryWriter& binary_writer, std::ofstream& log, bool& is_currently_
 	Player player = PLAYER::PLAYER_ID();
 	Ped player_ped = PLAYER::PLAYER_PED_ID();
 	Vehicle last_player_vehicle = PLAYER::GET_PLAYERS_LAST_VEHICLE();
+		Vector3 plv = ENTITY::GET_ENTITY_COORDS(player_ped, TRUE);
+
 
 	
 	// Check if player ped exists and control is on (e.g. not in a cutscene).
 	if (!ENTITY::DOES_ENTITY_EXIST(player_ped) || !PLAYER::IS_PLAYER_CONTROL_ON(player))
 		return;
+
+		wall_time = get_wall_time();
+		binary_writer.saveData(examineEntity(wall_time, last_player_vehicle, player_ped, last_player_vehicle));
 
 
 	// Get all vehicles.
@@ -291,7 +295,6 @@ void update(BinaryWriter& binary_writer, std::ofstream& log, bool& is_currently_
 	wall_time = get_wall_time();
 	int count = worldGetAllVehicles(vehicles, ARR_SIZE);
 	
-	Vector3 plv = ENTITY::GET_ENTITY_COORDS(player_ped, TRUE);
 	for (int i = 0; i < count; i++)
 	{
 		// This model could be useful to put in the packet--"object kind/type"?
@@ -301,13 +304,14 @@ void update(BinaryWriter& binary_writer, std::ofstream& log, bool& is_currently_
 
 		Vector3 v = ENTITY::GET_ENTITY_COORDS(vehicles[i], TRUE);
 
+			float dist = GAMEPLAY::GET_DISTANCE_BETWEEN_COORDS(plv.x, plv.y, plv.z, v.x, v.y, v.z, TRUE);
+			if (dist < SCAN_DIST) {
 		binary_writer.saveData(examineEntity(wall_time, vehicles[i], player_ped, last_player_vehicle));
 
 		if (DEBUGMODE) {
 			float x, y;
 			if (GRAPHICS::_WORLD3D_TO_SCREEN2D(v.x, v.y, v.z, &x, &y))
 			{
-				float dist = GAMEPLAY::GET_DISTANCE_BETWEEN_COORDS(plv.x, plv.y, plv.z, v.x, v.y, v.z, TRUE);
 				int health = ENTITY::GET_ENTITY_HEALTH(vehicles[i]);
 				char *name = VEHICLE::GET_DISPLAY_NAME_FROM_VEHICLE_MODEL(model);
 				// print text in a box
@@ -325,6 +329,8 @@ void update(BinaryWriter& binary_writer, std::ofstream& log, bool& is_currently_
 		}
 	}
 
+		}
+
 
 	// Get all peds.
 	Ped peds[ARR_SIZE];
@@ -333,15 +339,22 @@ void update(BinaryWriter& binary_writer, std::ofstream& log, bool& is_currently_
 
 	for (int i = 0; i < count; i++) {
 		
+			Vector3 v = ENTITY::GET_ENTITY_COORDS(peds[i], TRUE);
+			float dist = GAMEPLAY::GET_DISTANCE_BETWEEN_COORDS(plv.x, plv.y, plv.z, v.x, v.y, v.z, TRUE);
+			bool in_car = PED::IS_PED_IN_ANY_VEHICLE(peds[i], FALSE);
+			if (dist < SCAN_DIST && !in_car) {
+
 		binary_writer.saveData(examineEntity(wall_time, peds[i], player_ped, last_player_vehicle));
+
+				if (DEBUGMODE) {
 		char text[2048];
 		int ped_type = PED::GET_PED_TYPE(peds[i]);
-		if (DEBUGMODE) {
 			std::ostringstream state_string = formatEntityState(peds[i]);
 			sprintf_s(text, "Ped #%d (type %d)\n%s", i, ped_type, state_string.str().c_str());
 			drawTextOnObject(text, peds[i], 0.025f);
 		}
 	}
+		}
 
 		// Once we're done, we clear the lock.
 		writing_lock_set = false;
@@ -358,6 +371,7 @@ void main()
 
 	bool writing_lock_set = false;
 
+	if (DEBUGMODE)
 		log << "Each struct will have size " << sizeof(EntityState) << ", followed by a checksum byte." << std::endl;
 
 	bool recording_state = FALSE;
