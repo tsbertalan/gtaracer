@@ -371,9 +371,13 @@ class Track:
     def get(self, field, time):
         return self.get_interpolator(field)(time)
 
-    def associate(self, entity, unaffinity_threshold=5.0):
+    @property
+    def has_constant_position(self):
+        return np.unique(self._get_data('posx')).size == 1 and np.unique(self._get_data('posy')).size == 1
+
+    def associate(self, entity):
         """Associate an entity with this track."""
-        if self.unaffinity(entity) > unaffinity_threshold:
+        if self.unaffinity(entity) > self.unaffinity_threshold:
             return False
         else:
             self._entities.append(entity)
