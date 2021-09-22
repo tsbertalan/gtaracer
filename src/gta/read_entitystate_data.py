@@ -497,8 +497,10 @@ class Track:
 
 def entity_unaffinity(entity_state1, entity_state2):
     """Return the distance between two entity states."""
-    checked_fields = 'wall_time', 'posx', 'posy', 'posz', 'is_vehicle', 'is_player'
-    weights        = np.array([1.0, 1.0,    1.0,    1.0,    10.0,    10.0])
+    checked_fields = list(AFFINITY_KEYS) + ['is_vehicle', 'is_player']
+    weights = list(AFFINITY_KEY_WEIGHTS) + [10.0, 10.0]
+    # checked_fields = 'wall_time', 'posx', 'posy', 'posz', 'is_vehicle', 'is_player'
+    # weights        = np.array([1.0, 1.0,    1.0,    1.0,    10.0,    10.0])
     v1 = np.array([getattr(entity_state1, field) for field in checked_fields])
     v2 = np.array([getattr(entity_state2, field) for field in checked_fields])
     e = v1 - v2
@@ -518,9 +520,13 @@ class NearestFetcher:
         return self.y[closest]
 
 
+AFFINITY_KEYS = 'posx', 'posy', 'posz', 'wall_time'
+AFFINITY_KEY_WEIGHTS = 1.0, 1.0, 1.0, 100.0
+
 class ScalarInterpolator:
 
     def __init__(self, BaseInterpolator, x, y, **kw):
+        self._kw = kw
         if len(x) < 2:
             BaseInterpolator = NearestFetcher
         else:
