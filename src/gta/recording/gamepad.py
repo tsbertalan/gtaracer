@@ -100,11 +100,11 @@ class GamepadTask(BaseTask):
 
         @self.joystick.event
         def on_button(button, pressed):
-            self.resultsQueue.put((time.time(), (button, pressed)))
+            self.resultsQueue.put((time.monotonic(), (button, pressed)))
 
         @self.joystick.event
         def on_axis(axis, value):
-            self.resultsQueue.put((time.time(), (axis, value)))
+            self.resultsQueue.put((time.monotonic(), (axis, value)))
 
     def __call__(self):
         self.joystick.dispatch_events()

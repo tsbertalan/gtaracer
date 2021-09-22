@@ -1,9 +1,12 @@
+import time
 from gta.recording import BaseRecorder
 import gta.eventIDs
 
 class KeyboardRecorder(BaseRecorder):
 
     def __init__(self):
+        self.t0_time = time.time()
+        self.t0_monotonic = time.monotonic()
         super(self.__class__, self).__init__(period=None, Task=None)
 
     def eventCallback(self, event):
@@ -21,7 +24,8 @@ class KeyboardRecorder(BaseRecorder):
     def resultsList(self):
         while not self.resultsQueue.empty():
             event = self.resultsQueue.get()
-            time = event.time
+            # Convert from time.time to time.monotonic (without gaining the monotonicity, obviously).
+            time = event.time - self.t0_time + self.t0_monotonic
             key = event.name
             if event.is_keypad:
                 key += '_keypad'

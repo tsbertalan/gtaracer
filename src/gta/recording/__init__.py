@@ -18,7 +18,7 @@ def work(Task, workSignal, resultsQueueWorker, period, waitPeriod=1, **taskKwarg
         if workSignal.is_set():
             result = task()
             if result is not None:
-                now = time.time()
+                now = time.monotonic()
                 resultsQueueWorker.put((now, result))
             time.sleep(period)
         else:
