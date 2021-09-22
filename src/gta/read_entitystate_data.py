@@ -395,6 +395,62 @@ class Track:
             assert isinstance(which, int)
             return entity_unaffinity(self._entities[which], entity)
 
+    def __add__(self, track):
+        """Merge two tracks together."""
+        first, second = self._select_dominant_track(self, track)
+
+        first_entities = first._entities
+        second_entities = second._entities
+        final_time = first_entities[-1].wall_time
+
+        new_entites = first_entities
+        for e in second_entities:
+            if e.wall_time > final_time:
+                new_entites.append(e)
+        first._reset_data()
+        first._entities = new_entites
+        return first
+
+    def can_merge(self, track, do_plot=False):
+        """Return True if the two tracks can be merged."""
+        first, second = self._select_dominant_track(self, track)
+        unaffinity = min(
+            first.unaffinity(second.get_interpolated_state(first.tmax)), 
+            second.unaffinity(first.get_interpolated_state(second.tmax))
+        )
+        possible = unaffinity < first.unaffinity_threshold
+        if do_plot and (
+            (not first.has_constant_position)
+            and
+            (not second.has_constant_position)
+        ) and possible:
+            fig, axbx = first.show_track()
+            fig.suptitle('Can Merge' if possible else 'Cannot Merge')
+            fig.subplots_adjust(top=0.92)
+            second.show_track(axbx=axbx, linewidth=8, alpha=.75)
+            plt.show()
+            plt.close(fig)
+        return possible
+
+    @property
+    def ids(self):
+        return sorted(list(set([e.id for e in self._entities])))
+
+    @staticmethod
+    def _select_dominant_track(track1, track2):
+        """Return the dominant track."""
+        if track1.tmin < track2.tmin:
+            first = track1
+        else:
+            if track1.tmin == track2.tmin:
+                if track1.duration > track2.duration:
+                    first = track1
+                else:
+                    first = track2
+            else:
+                first = track2
+        return first, track2 if first is track1 else track1
+
     def _get_data(self, field):
         return np.array([getattr(entity_state, field) for entity_state in self._entities])
 
