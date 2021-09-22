@@ -328,11 +328,31 @@ def read_data(fname, scan=False):
 
 
 class Track:
-    def __init__(self, **interpolation_options):
+    def __init__(self, unaffinity_threshold=4.0, merge_threshold=0.1, **interpolation_options):
         interpolation_options.setdefault('kind', 'cubic')
+        interpolation_options.setdefault('fill_value', 'extrapolate')
+        self.unaffinity_threshold = unaffinity_threshold
+        self.merge_threshold = merge_threshold
+        self.interpolation_options = interpolation_options
+        self._reset_data()
+
+    def _reset_data(self):
         self.interpolators = {}
         self._entities = []
-        self.interpolation_options = interpolation_options
+
+    @property
+    def _nonduplicate_time_indices(self):
+        t = self.times
+        # make sure it's sorted
+        t_s = np.array(sorted(t))
+        assert np.all(t == t_s)
+        indices = []
+        last_time = None
+        for i, ti in enumerate(t):
+            if last_time is None or ti != last_time:
+                indices.append(i)
+            last_time = ti
+        return indices
 
     @property
     def duration(self):
