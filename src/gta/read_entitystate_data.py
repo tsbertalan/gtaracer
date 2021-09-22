@@ -587,6 +587,7 @@ class ScalarInterpolator:
 def cached_TrackManager_fetch(binfpath):
     return TrackManager(binfpath)
 
+
 class TrackManager:
 
     def __init__(self, entities_or_binfpath=None, pbar=True):
@@ -653,16 +654,140 @@ class TrackManager:
             tested_tracks.sort(key=lambda track: track.duration)
         return tested_tracks[-1]
 
+    def merge_tracks_where_possible(self, method='dist'):
+        fig, ax = self.show_tracks()
+        tracks = list(sorted(self.tracks, key=lambda track: track.tmin))
+        title = 'Before Merging (%d tracks)' % len(tracks)
+        fig.suptitle(title)
+        print(title)
 
-def read_data_main(plot_3d=False, fname="C:\Program Files (x86)\Steam\SteamApps\common\Grand Theft Auto V\\"):
-    if fname.endswith('\\') or fname.endswith('/'):
+        if method == 'brute':
+            pbar = tqdm(total=len(tracks)*len(tracks), unit='pair', desc='Merging tracks.')
+            for i in range(len(tracks)):
+                for j in range(len(tracks)):
+                    pbar.update()
+                    track_i = tracks[i]
+                    track_j = tracks[j]
+                    if i != j and track_i is not None and track_j is not None:
+                        if track_i.can_merge(track_j):
+                            # print('Merging track ({tmin1}->{tmax1}; dt={dt1}) with track ({tmin2}->{tmax2}; dt={dt2}).'.format(
+                            #     tmin1=track_i.tmin, tmax1=track_i.tmax, dt1=track_i.duration,
+                            #     tmin2=track_j.tmin, tmax2=track_j.tmax, dt2=track_j.duration,
+                            # ))
+                            merged = track_i + track_j
+                            if merged is track_i:
+                                tracks[j] = None
+                            else:
+                                tracks[i] = None
+
+        else:
+            import scipy.spatial
+            assert method in ('dist', 'kdtree')
+        
+            # Make a big point cloud of all the points in all the tracks.
+            points = np.vstack([
+                np.hstack([
+                    track._get_data(key).reshape((-1, 1))
+                    for key in AFFINITY_KEYS
+                ])
+                for track in tracks
+            ]) * AFFINITY_KEY_WEIGHTS
+
+            # Make an array of ID indicators for which track each point belongs to.
+            which_track = np.hstack([
+                np.ones((len(track),), dtype=int) * i
+                for i, track in enumerate(tracks)
+            ])
+
+            if method == 'kdtree':
+                # Make a KD-tree of the points.
+                kd_tree = scipy.spatial.cKDTree(points)
+
+            # For each track, find the points that are within a certain distance of its points.
+            track_merges = []
+            for itrack, track in enumerate(tqdm(tracks, unit='track', desc='Merging tracks by %s' % method)):
+                # if True in [itrack in mergees for mergees in track_merges]:
+                #     continue
+                
+                points_for_this_track = points[which_track == itrack]
+
+                if method == 'dist':
+
+                    distances_to_tracks = []
+                    for jtrack, other_track in enumerate(tracks):
+                        points_for_other_track = points[which_track == jtrack]
+                        dist_arr = scipy.spatial.distance.cdist(points_for_this_track, points_for_other_track)
+                        distances_to_tracks.append(dist_arr.min())
+
+                    tracks_near_this_track = list(np.argwhere(np.array(distances_to_tracks) <= track.merge_threshold).ravel())
+                    track_merges.append(tracks_near_this_track)
+
+                else:
+                    assert method == 'kdtree'
+                    #dist, idx = kd_tree.query(query, k=4, distance_upper_bound=track.unaffinity_threshold)
+                    neighbors_for_each_point = kd_tree.query_ball_point(points_for_this_track, track.unaffinity_threshold)
+                    all_neighbors = np.hstack([a for a in neighbors_for_each_point])
+                    neighbor_set = np.unique(all_neighbors)
+                    # nearby_point_indices = np.unique(idx[dist != np.inf])
+                    tracks_nearby = list(np.unique(which_track[neighbor_set]))
+                    assert itrack in tracks_nearby
+                    #if itrack in mergees:
+                    #    mergees.remove(itrack)
+                    track_merges.append(tracks_nearby)
+
+            # Find overlapping sets.
+            merge_sets = []
+            for mergees in track_merges:
+                mergees = set(mergees)
+                has_overlap = False
+                for existing_set in merge_sets:
+                    if existing_set.intersection(mergees):
+                        # There's an overlap; replace the existing set with the union one.
+                        new_set = set(existing_set).union(mergees)
+                        merge_sets.remove(existing_set)
+                        merge_sets.append(new_set)
+                        has_overlap = True
+                if not has_overlap:
+                    merge_sets.append(mergees)
+                    
+            # Do the merging.
+            for i, mergees in enumerate(merge_sets):
+                if len(mergees) > 0:
+                    for j in mergees:
+                        if j != i:
+                            ti = tracks[i]
+                            tj = tracks[j]
+                            if ti is not None and tj is not None:
+                                merged = tracks[i] + tracks[j]
+                                if merged is ti:
+                                    tracks[j] = None
+                                else:
+                                    tracks[i] = None
+
+        # Remove any tracks that were merged away.
+        new_trackgroups = {}
+        for track in tracks:
+            if track is None:
+                continue
+            for i in track.ids:
+                if i not in new_trackgroups:
+                    new_trackgroups[i] = []
+                new_trackgroups[i].append(track)
+        self.trackgroups = new_trackgroups
+
+        fig, ax = self.show_tracks()
+        title = 'After Merging (%d tracks)' % len([t for t in tracks if t is not None])
+        fig.suptitle(title)
+        print(title)
         from glob import glob
         binfiles = list(sorted(glob(fname + "GTA_recording*bin")))
         fname = binfiles[-1]
         print('Found most recent binfile:', fname)
 
-    data = read_data(fname)
-    track_manager = TrackManager(data)
+    #track_manager = TrackManager(fname)
+    track_manager = cached_TrackManager_fetch(fname)
+    #track_manager.show_tracks(plot_3d=False)
+    track_manager.merge_tracks_where_possible()
     t_mean = (track_manager.tmin + track_manager.tmax) / 2.
     #active_tracks = track_manager.get_active_tracks(t_mean)
  
