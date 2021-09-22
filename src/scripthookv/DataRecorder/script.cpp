@@ -230,8 +230,13 @@ EntityState examineEntity(double wall_time, Entity entity, Ped player_ped, Vehic
 }
 
 
-void update(BinaryWriter& binary_writer, std::ofstream& log, bool& is_currently_recording, bool& first_keyhit_seen)
+void update(BinaryWriter& binary_writer, std::ofstream& log, bool& is_currently_recording, bool& first_keyhit_seen, bool& writing_lock_set)
 {
+
+	if (writing_lock_set)
+		// Don't do anything if the lock is set.
+		return;
+
 	if (IsKeyDown(VK_NUMPAD1)) {
 		if (!first_keyhit_seen) { // Only detect actual down changes; don't repeat while down.
 			if (is_currently_recording) {
@@ -264,6 +269,9 @@ void update(BinaryWriter& binary_writer, std::ofstream& log, bool& is_currently_
 	// we don't want to mess with missions in this example
 	if (GAMEPLAY::GET_MISSION_FLAG())
 		return;
+
+		// If we've gotten this far, we're committed to writing *something*.
+		writing_lock_set = true;
 
 	
 	// Get the player.
@@ -334,6 +342,9 @@ void update(BinaryWriter& binary_writer, std::ofstream& log, bool& is_currently_
 			drawTextOnObject(text, peds[i], 0.025f);
 		}
 	}
+
+		// Once we're done, we clear the lock.
+		writing_lock_set = false;
 	}
 }
 
@@ -345,7 +356,8 @@ void main()
 
 	BinaryWriter binary_writer(log);
 
-	if(DEBUGMODE)
+	bool writing_lock_set = false;
+
 		log << "Each struct will have size " << sizeof(EntityState) << ", followed by a checksum byte." << std::endl;
 
 	bool recording_state = FALSE;
@@ -353,7 +365,7 @@ void main()
 
 	while (true)
 	{
-	    update(binary_writer, log, recording_state, key_toggling);
+		update(binary_writer, log, recording_state, key_toggling, writing_lock_set);
 		binary_writer.flush();
 		WAIT(0);
 	}
