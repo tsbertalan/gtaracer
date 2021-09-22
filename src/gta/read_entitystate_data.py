@@ -151,7 +151,7 @@ def read_data(fname, scan=False):
     """Scan through the data and make structs."""
 
     # We'll accumulate structs here.
-    data = []
+    entities = []
 
     # Every struct starts with a 3-byte marker.
     marker = b'GTAGTA'
@@ -173,7 +173,8 @@ def read_data(fname, scan=False):
     with open(fname, "rb") as f:
         bytes = f.read()
 
-        pbar = tqdm(total=len(bytes)/1024., unit='kbytes', desc='Reading loaded file')
+    pbar = tqdm(total=len(bytes)/1024., unit='kbytes', desc='Reading loaded file')
+    if scan:
         i = 0
         while True:
 
@@ -202,10 +203,12 @@ def read_data(fname, scan=False):
             else:
                 # Unpack from the smaller first part.
                 item_chunk = full_chunk[:item_size]
-                datum = struct.unpack(structure_code, item_chunk)
+                if len(item_chunk) < item_size:
+                    break
+                datum_struct = struct.unpack(structure_code, item_chunk)
 
                 # Construct a more convenient form.
-                datum = EntityStateTuple(*datum)
+                entity = EntityStateTuple(*datum_struct)
                 num_packets_attempted += 1
 
                 # Check the checksum. Note that the checksum is an
@@ -220,25 +223,69 @@ def read_data(fname, scan=False):
                 #                       ^
                 #                checksum
                 checksum = xorchecksum(full_chunk[:-1])
-                target_checksum = full_chunk[-1]
+                checksum_target = full_chunk[-1]
 
                 # If the packets passes our test, we'll add it to the list.
-                if checksum == target_checksum:
-                    if is_valid(datum):
-                        data.append(datum)
+                if checksum == checksum_target:
+                    if is_valid(entity):
+                        entities.append(entity)
                         failures.append(0)
                     else:
+                        warn('Entity packet failed validation.')
                         num_validfails += 1
                         failures.append(1)
                 else:
+                    warn('Entity packet failed checksum.')
                     num_checkfails += 1
                     failures.append(2)
 
                 # Continue to the next packet.
                 i += window_size
 
+
+    else:
+        bytes_to_read = bytes
+        while True:
+
+            # Skip ahead until the next start marker.
+            inext = bytes_to_read.find(marker)
+            if inext == -1:
+                break
+            bytes_to_read = bytes_to_read[inext:]
+            if len(bytes_to_read) < item_size:
+                break
+            
+            # Step the progressbar in units of kilobytes.
+            i = len(bytes) - len(bytes_to_read)
+            pbar_jump = int(i - pbar.n * 1024.) // 1024
+            if pbar_jump > 0:
+                pbar.update(pbar_jump)
+
+            # Compute and check the checksum.
+            checksum_chunk = bytes_to_read[:window_size-1]
+            checksum_target = bytes_to_read[window_size]
+            checksum = xorchecksum(checksum_chunk)
+            num_packets_attempted += 1
+
+            # If the packets passes checksum and our test, we'll add it to the list.
+            item_chunk = bytes_to_read[:item_size]
+            datum_struct = struct.unpack(structure_code, item_chunk)
+            entity = EntityStateTuple(*datum_struct)
+            if checksum == checksum_target:
+                # if is_valid(entity):
+                entities.append(entity)
+                failures.append(0)
+                # else:
+                #     num_validfails += 1
+                #     failures.append(1)
+            else:
+                num_checkfails += 1
+                failures.append(2)
+
+            # Whatever happened, step forward one byte so this marker will be skipped.
+            bytes_to_read = bytes_to_read[1:]
+
     if num_skips > 0 or num_checkfails > 0 or num_validfails > 0:
-        from warnings import warn
         msg = '''Some problems encountered while reading file:
         - Skipped forward %d times (%d cumulative bytes from %d bytes total, or %.2f%%).
         - %d packets had checksum failures (%.2f%%).
@@ -254,12 +301,12 @@ def read_data(fname, scan=False):
 
         # Jitter the locations to make them show up more clearly.
         failures = np.array(failures)
-        jittered_failures = failures + np.random.normal(loc=0, scale=0.05, size=len(failures))
+        jittered_failures = failures + np.random.normal(loc=0, scale=0.25, size=len(failures))
         attempt_num = np.arange(len(failures)).astype(float)
         jittered_attempt_num = attempt_num# + np.random.normal(loc=0, scale=1.0, size=len(attempt_num))
 
         # Plot all data.
-        ax.scatter(jittered_attempt_num, jittered_failures, marker='|', alpha=.05, color='black')
+        ax.scatter(jittered_attempt_num, jittered_failures, marker='|', alpha=.25, color='black')
 
         # Replot the invalid ones, since they're too few to be seen with light alpha.
         where_baddat = np.argwhere(failures == 1)
@@ -275,11 +322,9 @@ def read_data(fname, scan=False):
 
         fig.tight_layout()
         fig.savefig('%s-data_read_failures.png' % (fname,))
-        plt.show()
         plt.close(fig)
 
-
-    return data
+    return entities
 
 
 class Track:
