@@ -46,7 +46,6 @@ class EntityState(Structure):
         ("m5", c_char),
         ("m6", c_char),
 
-       
         # The entity's non-unique ID in this timestep--just an index 
         # in the list of either vehicles or pedestrians.
         # That is, the combination of ID and the later is_vehicle is unique per time step.
@@ -147,7 +146,7 @@ def is_valid(entity_state, max_abs=1e7, max_abs_xy=1e4):
 
 
 @memory.cache
-def read_data(fname, scan=False):
+def read_data(fname):
     """Scan through the data and make structs."""
 
     # We'll accumulate structs here.
@@ -174,118 +173,76 @@ def read_data(fname, scan=False):
         bytes = f.read()
 
     pbar = tqdm(total=len(bytes)/1024., unit='kbytes', desc='Reading loaded file')
-    if scan:
-        i = 0
-        while True:
+    i = 0
+    while True:
 
-            # Step the progressbar in units of kilobytes.
-            pbar_jump = int(i - pbar.n * 1024.) // 1024
-            if pbar_jump > 0:
-                pbar.update(pbar_jump)
-            
-            # Take a bigger bite.
-            full_chunk = bytes[i:i+window_size]
+        # Step the progressbar in units of kilobytes.
+        pbar_jump = int(i - pbar.n * 1024.) // 1024
+        if pbar_jump > 0:
+            pbar.update(pbar_jump)
+        
+        # Take a bigger bite.
+        full_chunk = bytes[i:i+window_size+1]
 
-            # Check for a marker.
-            if not full_chunk.startswith(marker):
-                # Skip ahead until the next start marker.
-                num_skips += 1
-                skip_size = bytes[i:].find(marker)
-                if skip_size > warnable_skipsize:
-                    warn('Larger byte skip encountered (%d bytes).' % (skip_size,))
-                bytes_skipped += skip_size
-                if skip_size != -1:
-                    i += skip_size
-                else:
-                    # No more markers; we're done.
-                    break
-            
-            else:
-                # Unpack from the smaller first part.
-                item_chunk = full_chunk[:item_size]
-                if len(item_chunk) < item_size:
-                    break
-                datum_struct = struct.unpack(structure_code, item_chunk)
-
-                # Construct a more convenient form.
-                entity = EntityStateTuple(*datum_struct)
-                num_packets_attempted += 1
-
-                # Check the checksum. Note that the checksum is an
-                # extra byte appended *after* even the larger chunk.
-                # Because the larger and smaller chunk differ only by zero padding,
-                # they should have the same (xor) checksum.
-                # [sssssssssssssssslllllc]
-                #  ^^^^^^^^^^^^^^^^
-                #    smaller chunk
-                #  ^^^^^^^^^^^^^^^^^^^^^
-                #       larger chunk
-                #                       ^
-                #                checksum
-                checksum = xorchecksum(full_chunk[:-1])
-                checksum_target = full_chunk[-1]
-
-                # If the packets passes our test, we'll add it to the list.
-                if checksum == checksum_target:
-                    if is_valid(entity):
-                        entities.append(entity)
-                        failures.append(0)
-                    else:
-                        warn('Entity packet failed validation.')
-                        num_validfails += 1
-                        failures.append(1)
-                else:
-                    warn('Entity packet failed checksum.')
-                    num_checkfails += 1
-                    failures.append(2)
-
-                # Continue to the next packet.
-                i += window_size
-
-
-    else:
-        bytes_to_read = bytes
-        while True:
-
+        # Check for a marker.
+        if not full_chunk.startswith(marker):
             # Skip ahead until the next start marker.
-            inext = bytes_to_read.find(marker)
-            if inext == -1:
+            num_skips += 1
+            skip_size = bytes[i:].find(marker)
+            if skip_size > warnable_skipsize:
+                warn('Larger byte skip encountered (%d bytes).' % (skip_size,))
+            if skip_size > 0:
+                bytes_skipped += skip_size
+            if skip_size != -1:
+                i += skip_size
+            else:
+                # No more markers; we're done.
                 break
-            bytes_to_read = bytes_to_read[inext:]
-            if len(bytes_to_read) < item_size:
+        
+        else:
+            # Unpack from the smaller first part.
+            item_chunk = full_chunk[:item_size]
+            if len(item_chunk) < item_size:
                 break
-            
-            # Step the progressbar in units of kilobytes.
-            i = len(bytes) - len(bytes_to_read)
-            pbar_jump = int(i - pbar.n * 1024.) // 1024
-            if pbar_jump > 0:
-                pbar.update(pbar_jump)
+            datum_struct = struct.unpack(structure_code, item_chunk)
 
-            # Compute and check the checksum.
-            checksum_chunk = bytes_to_read[:window_size-1]
-            checksum_target = bytes_to_read[window_size]
-            checksum = xorchecksum(checksum_chunk)
+            # Construct a more convenient form.
+            entity = EntityStateTuple(*datum_struct)
             num_packets_attempted += 1
 
-            # If the packets passes checksum and our test, we'll add it to the list.
-            item_chunk = bytes_to_read[:item_size]
-            datum_struct = struct.unpack(structure_code, item_chunk)
-            entity = EntityStateTuple(*datum_struct)
+            # Check the checksum. Note that the checksum is an
+            # extra byte appended *after* even the larger chunk.
+            # Because the larger and smaller chunk differ only by zero padding,
+            # they should have the same (xor) checksum.
+            # [sssssssssssssssslllllc]
+            #  ^^^^^^^^^^^^^^^^
+            #    item chunk
+            #  ^^^^^^^^^^^^^^^^^^^^^
+            #       full chunk
+            #                       ^
+            #                checksum
+            checksum = xorchecksum(full_chunk[:-1])
+            checksum_target = full_chunk[-1]
+
+            # If the packets passes our test, we'll add it to the list.
             if checksum == checksum_target:
-                # if is_valid(entity):
-                entities.append(entity)
-                failures.append(0)
-                # else:
-                #     num_validfails += 1
-                #     failures.append(1)
+                if is_valid(entity):
+                    entities.append(entity)
+                    failures.append(0)
+                else:
+                    warn('Entity packet failed validation.')
+                    num_validfails += 1
+                    failures.append(1)
             else:
+                warn('Entity packet failed checksum.')
                 num_checkfails += 1
                 failures.append(2)
 
-            # Whatever happened, step forward one byte so this marker will be skipped.
-            bytes_to_read = bytes_to_read[1:]
+            # Continue to the next packet.
+            i += window_size+1
 
-    if num_skips > 0 or num_checkfails > 0 or num_validfails > 0:
+
+    if bytes_skipped > 0 or num_checkfails > 0 or num_validfails > 0:
         msg = '''Some problems encountered while reading file:
         - Skipped forward %d times (%d cumulative bytes from %d bytes total, or %.2f%%).
         - %d packets had checksum failures (%.2f%%).
