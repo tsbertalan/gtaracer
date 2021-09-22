@@ -591,7 +591,7 @@ class TrackManager:
         out = []
         for trackgroup in self.trackgroups.values():
             out.extend(trackgroup)
-        return out
+        return list(sorted(set(out), key=lambda x: x.tmin))
 
     def get_active_tracks(self, time):
         """Return a list of tracks that are active at the given time."""
