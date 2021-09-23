@@ -18,7 +18,7 @@ HERE = dirname(__file__)
 DATA_DIR = join(HOME, 'data', 'gta', 'velocity_prediction')
 
 from joblib import Memory
-memory = Memory(location=DATA_DIR, verbose=1)
+memory = Memory(location=DATA_DIR, verbose=11)
 
 
 class EntityState(Structure):
@@ -51,7 +51,10 @@ class EntityState(Structure):
         # That is, the combination of ID and the later is_vehicle is unique per time step.
         ("id", c_int),
 
-        # Absolute position in the world in meters.
+        # The entity's model.
+        ("entity_type", c_int),
+
+        # Absolute position in the world [meters].
         ("posx", c_float),
         ("posy", c_float),
         ("posz", c_float),
@@ -62,7 +65,7 @@ class EntityState(Structure):
         ("pitch", c_float),
         ("yaw",   c_float),
 
-        # Velocity in meters per second.
+        # Velocity [meters per second].
         ("velx", c_float),
         ("vely", c_float),
         ("velz", c_float),
@@ -72,23 +75,33 @@ class EntityState(Structure):
         ("rvely", c_float),
         ("rvelz", c_float),
 
+        # The entity's model's bounding box [meters].
+        ("bboxdx", c_float),
+        ("bboxdy", c_float),
+        
         # Corresponds to Python's time.monotonic
         ("wall_time", c_double),
 
-        # If the entity is on-screen, its coordinates in screen space (pixels?).
+        # If the entity is on-screen, its coordinates in screen space [fractional].
         ("screenx", c_float),
         ("screeny", c_float),
 
         # Is the entity on-screen? This tends to err on the side of reporting False,
         # even if something like a tree is almost completely blocking it.
         # Or, maybe it just doesn't even count trees as occluding the entity.
-        ("occluded", c_bool),
+        ("is_occluded", c_bool),
 
         # Whether the entity is a vehicle (vs a pedestrian).
         ("is_vehicle", c_bool),
 
         # Whether the entity is the player or player's vehicle.
         ("is_player", c_bool),
+
+        # Whether the entity is stopped at a light, if it's a vehicle.
+        ("is_stopped_at_light", c_bool),
+
+        # Whether the entity is damaged, if it's a vehicle.
+        ("is_damaged", c_bool),
     ]
 
 # This structure code is what we'll *actually* use to read the struct.
@@ -171,8 +184,26 @@ def read_data(fname):
     with open(fname, "rb") as f:
         bytes = f.read()
 
-    pbar = tqdm(total=len(bytes)/1024., unit='kbytes', desc='Reading loaded file')
     i = 0
+
+    pv_tok1 = b'PROTOCOL_VERSION>>'
+    pv_tok2 = b'<<PROTOCOL_VERSION'
+    if not (pv_tok1 in bytes[:100] and pv_tok2 in bytes[:100]):
+        protocol_version = -1
+    else:
+        # This is a protocol version header.
+        # Read it for future use, and then skip it.
+        i += len(pv_tok1)
+        pv_bstr_len = bytes[i:].find(pv_tok2)
+        protocol_version = bytes[i:i+pv_bstr_len].decode('ascii')
+        try:
+            protocol_version = int(protocol_version)
+        except ValueError:
+            warn('Could not parse protocol version: {}'.format(protocol_version))
+        print('Protocol version: {}'.format(protocol_version))
+        i += pv_bstr_len + len(pv_tok2)
+        
+    pbar = tqdm(total=len(bytes)/1024., unit='kbytes', desc='Reading loaded file')
     while True:
 
         # Step the progressbar in units of kilobytes.
@@ -180,7 +211,7 @@ def read_data(fname):
         if pbar_jump > 0:
             pbar.update(pbar_jump)
         
-        # Take a bigger bite.
+        # Take a bigger bite, for checksumming purposes.
         full_chunk = bytes[i:i+window_size+1]
 
         # Check for a marker.
@@ -453,7 +484,7 @@ class Track:
     def get_interpolator(self, field):
         """Return an interpolator for the given field."""
         check_datum = self._get_data(field)[0]
-        force_nearest = 'id', 'm1', 'm2', 'm3', 'occluded', 'is_player', 'is_vehicle'
+        force_nearest = 'id', 'm1', 'm2', 'm3', 'is_occluded', 'is_player', 'is_vehicle'
         if (field not in force_nearest) and isinstance(check_datum, numbers.Number):
             from scipy.interpolate  import interp1d
             Interpolator = interp1d

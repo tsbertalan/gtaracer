@@ -8,7 +8,7 @@
 
 
 #define DEBUGMODE FALSE
-#define SCAN_DIST 64.0
+#define SCAN_DIST 128.0
 
 double get_wall_time() {
 	using namespace std::chrono;
@@ -18,6 +18,7 @@ double get_wall_time() {
 }
 
 
+#define PROTOCOL_VERSION "2"
 typedef struct EntityState {
 	const char m1 = 'G';
 	const char m2 = 'T';
@@ -25,17 +26,18 @@ typedef struct EntityState {
 	const char m4 = 'G';
 	const char m5 = 'T';
 	const char m6 = 'A';
-	int id;
+
+	int id, entity_type;
 	float
 		posx, posy, posz,
 		roll, pitch, yaw,
 		velx, vely, velz,
-		rvelx, rvely, rvelz;
+		rvelx, rvely, rvelz,
+		bboxdx, bboxdy;
 	double wall_time;
 	float screenx, screeny;
-	bool occluded;
-	bool is_vehicle;
-	bool is_player;
+	bool is_occluded, is_vehicle, is_player,
+		is_stopped_at_light, is_damaged;
 } EntityState;
 
 
@@ -51,7 +53,7 @@ char entityStateChecksum(EntityState& es) {
 
 class BinaryWriter {
 private:
-	std::ofstream fh;
+	std::ofstream file_handle;
 	std::ofstream& log;
 	bool file_opened;
 public:
@@ -75,8 +77,9 @@ public:
 
 		if (!file_opened) {
 			log << "Binary data will be saved to file \"" << file_name << "\"." << std::endl;
-			fh.open(file_name, std::ios::out | std::ios::trunc | std::ios::binary);
+			file_handle.open(file_name, std::ios::out | std::ios::trunc | std::ios::binary);
 			file_opened = TRUE;
+			file_handle << "PROTOCOL_VERSION>>" << PROTOCOL_VERSION << "<<PROTOCOL_VERSION";
 		}
 	}
 
@@ -85,26 +88,25 @@ public:
 			log << "Closing open binary file." << std::endl;
 			flush();
 			file_opened = FALSE;
-			fh.close();
+			file_handle.close();
 		}
 	}
 
 	bool saveData(EntityState& data) {
 		if (file_opened) {
-			fh.write(reinterpret_cast<char*>(&data), sizeof(data));
-			fh << entityStateChecksum(data);
+			file_handle.write(reinterpret_cast<char*>(&data), sizeof(data));
+			file_handle << entityStateChecksum(data);
 			return TRUE;
 		}
 		else {
 			log << "File is not open; refusing to save new data." << std::endl;
 			return FALSE;
 		}
-
 	}
 
 	void flush() {
 		if (file_opened) {
-			fh << std::flush;
+			file_handle << std::flush;
 		}
 	}
 
@@ -150,7 +152,7 @@ std::ostringstream formatEntityState(Entity entity) {
 	//Vector3 vel = ENTITY::GET_ENTITY_VELOCITY(entity);
 	//Vector3 rvel = ENTITY::GET_ENTITY_ROTATION_VELOCITY(entity);
 
-	bool occluded = ENTITY::IS_ENTITY_OCCLUDED(entity);
+	bool is_occluded = ENTITY::IS_ENTITY_OCCLUDED(entity);
 
 	float xvis, yvis;
 	if (!GRAPHICS::_WORLD3D_TO_SCREEN2D(pos.x, pos.y, pos.z, &xvis, &yvis)) {
@@ -165,7 +167,7 @@ std::ostringstream formatEntityState(Entity entity) {
 	//text << "PosVel (" << vel.x << "," << vel.y << "," << vel.z << ")" << std::endl << std::flush;
 	//text << "RotVel (" << rvel.x << "," << rvel.y << "," << rvel.z << ")" << std::endl << std::flush;
 	text << "Screen (" << xvis << "," << yvis << ")" << std::endl << std::flush;
-	if (occluded) {
+	if (is_occluded) {
 		text << "occluded";
 	}
 	else {
@@ -180,7 +182,7 @@ EntityState examineEntity(double wall_time, Entity entity, Ped player_ped, Vehic
 	EntityState s;
 	s.wall_time = wall_time;
 
-	s.occluded = ENTITY::IS_ENTITY_OCCLUDED(entity);
+	s.is_occluded = !ENTITY::IS_ENTITY_VISIBLE(entity);  // Try IS_ENTITY_OCCLUDED or IS_ENTITY_ON_SCREEN
 
 	s.roll = ENTITY::GET_ENTITY_ROLL(entity);
 	s.pitch = ENTITY::GET_ENTITY_PITCH(entity);
@@ -190,7 +192,6 @@ EntityState examineEntity(double wall_time, Entity entity, Ped player_ped, Vehic
 	s.posx = p.x;
 	s.posy = p.y;
 	s.posz = p.z;
-
 
 	Vector3 v = ENTITY::GET_ENTITY_VELOCITY(entity);
 	s.velx = v.x;
@@ -202,6 +203,16 @@ EntityState examineEntity(double wall_time, Entity entity, Ped player_ped, Vehic
 	s.rvely = rvel.y;
 	s.rvelz = rvel.z;
 
+	Hash model_hash = ENTITY::GET_ENTITY_MODEL(entity);
+
+	Vector3 bbox1, bbox2;
+	GAMEPLAY::GET_MODEL_DIMENSIONS(model_hash, &bbox1, &bbox2);
+	s.bboxdx = bbox2.x - bbox1.x;
+	s.bboxdy = bbox2.y - bbox1.y;
+
+	s.entity_type = ENTITY::GET_ENTITY_TYPE(entity);
+
+	
 	float xvis = -1;
 	float yvis = -1;
 	if (!GRAPHICS::_WORLD3D_TO_SCREEN2D(p.x, p.y, p.z, &xvis, &yvis)) {
@@ -215,10 +226,14 @@ EntityState examineEntity(double wall_time, Entity entity, Ped player_ped, Vehic
 	if (s.is_vehicle) {
 		s.id = ENTITY::GET_VEHICLE_INDEX_FROM_ENTITY_INDEX(entity);
 		s.is_player = player_vehicle == s.id;
+		s.is_stopped_at_light = VEHICLE::IS_VEHICLE_STOPPED_AT_TRAFFIC_LIGHTS(entity);
+		s.is_damaged = VEHICLE::_IS_VEHICLE_DAMAGED(entity);
 	}
 	else {
 		s.id = ENTITY::GET_PED_INDEX_FROM_ENTITY_INDEX(entity);
 		s.is_player = player_ped == s.id;
+		s.is_stopped_at_light = FALSE;
+		s.is_damaged = FALSE;
 	}
 
 
@@ -259,7 +274,6 @@ void update(BinaryWriter& binary_writer, std::ofstream& log, bool& is_currently_
 	if (is_currently_recording) {
 
 		// TODO: Get more important fields : (1) vehicle type(for example, so we can ignore airplanes easily) (2) ? ? ? (3) profit.
-		// TODO: Use GET_MODEL_DIMENSIONS to get the bounding box for the entity.
 		// TODO: Use some of the CAM namespace actions to get scene information once per update. (E.g., camera FoV and position.)
 
 		double wall_time;
