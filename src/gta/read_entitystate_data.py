@@ -5,7 +5,6 @@ Later, we might want to read from a network socket instead.
 """
 import numbers, numpy as np
 from collections import namedtuple
-from ctypes import c_uint, c_int, c_double, c_float, c_bool, Structure, c_char, sizeof
 from tqdm.auto import tqdm
 import struct
 import matplotlib.pyplot as plt
@@ -14,6 +13,7 @@ from matplotlib.patches import Polygon
 from mpl_toolkits.mplot3d import Axes3D
 from warnings import warn
 from os.path import join, expanduser, dirname
+from packaging import version
 HOME = expanduser("~")
 HERE = dirname(__file__)
 DATA_DIR = join(HOME, 'data', 'gta', 'velocity_prediction')
@@ -22,104 +22,46 @@ from joblib import Memory
 memory = Memory(location=DATA_DIR, verbose=11)
 
 
-class EntityState(Structure):
-    """
-    This is how we will receive data from the C++ side.
+import protocol_versions
+from ctypes import c_uint, c_int, c_double, c_float, c_bool, Structure, c_char, sizeof
 
-    Even though we write sizeof(c_struct) bytes from the C++ side, 
-    it ends up writing a few extra for padding. Doing sizeof(EntityState) from
-    the Python side correctly predicts this, whereas just doing 
-    struct.calcsize(EntityState.structure_code) doesn't.
-    So, we need to read chunks of the former, larger size, 
-    but then feed only the smaller first part of these chunks
-    into struct.unpack(), which is *much* faster than EntityState.from_buffer_copy().
 
-    Still, we'll keep EntityState around as a useful list of explicit class names, 
-    from which to build our namedtuple.
-    """
-
-    _fields_ = [
-        # A start marker for the beginning of the struct. Always the bytes b'GTAGTA'.
-        ("m1", c_char),
-        ("m2", c_char),
-        ("m3", c_char),
-        ("m4", c_char),
-        ("m5", c_char),
-        ("m6", c_char),
-
-        # The entity's non-unique ID in this timestep--just an index 
-        # in the list of either vehicles or pedestrians.
-        # That is, the combination of ID and the later is_vehicle is unique per time step.
-        ("id", c_int),
-
-        # The entity's model.
-        ("entity_type", c_int),
-
-        # Absolute position in the world [meters].
-        ("posx", c_float),
-        ("posy", c_float),
-        ("posz", c_float),
-
-        # Euler angles in the world frame (right)?
-        # TODO: check frames.
-        ("roll",  c_float),
-        ("pitch", c_float),
-        ("yaw",   c_float),
-
-        # Velocity [meters per second].
-        ("velx", c_float),
-        ("vely", c_float),
-        ("velz", c_float),
-
-        # Rotational velocity
-        ("rvelx", c_float),
-        ("rvely", c_float),
-        ("rvelz", c_float),
-
-        # The entity's model's bounding box [meters].
-        ("bboxdx", c_float),
-        ("bboxdy", c_float),
+class ProtocolDefinition:
+    
+    def __init__(self, version_string):
+        self.version_string = version_string
+        self.version = version.parse(version_string)
+        v1 = version.parse('1')
+        v2 = version.parse('2')
         
-        # Corresponds to Python's time.monotonic
-        ("wall_time", c_double),
+        if self.version == v2:
+            self.EntityState = protocol_versions.EntityStateV2
+        elif self.version == v1:
+            self.EntityState = protocol_versions.EntityStateV1
+        elif self.version > v2:
+            raise ValueError('Version {} is not supported.'.format(version_string))
+        else:
+            assert isinstance(self.version, version.LegacyVersion)
+            warn("Unknown version string: {}; defaulting to V1.".format(version_string))
+            self.EntityState = protocol_versions.EntityStateV1
+        self.constant_fields = 'is_player', 'is_vehicle', 'm1', 'm2', 'm3'
 
-        # If the entity is on-screen, its coordinates in screen space [fractional].
-        ("screenx", c_float),
-        ("screeny", c_float),
-
-        # Is the entity on-screen? This tends to err on the side of reporting False,
-        # even if something like a tree is almost completely blocking it.
-        # Or, maybe it just doesn't even count trees as occluding the entity.
-        ("is_occluded", c_bool),
-
-        # Whether the entity is a vehicle (vs a pedestrian).
-        ("is_vehicle", c_bool),
-
-        # Whether the entity is the player or player's vehicle.
-        ("is_player", c_bool),
-
-        # Whether the entity is stopped at a light, if it's a vehicle.
-        ("is_stopped_at_light", c_bool),
-
-        # Whether the entity is damaged, if it's a vehicle.
-        ("is_damaged", c_bool),
-    ]
-
-# This structure code is what we'll *actually* use to read the struct.
-structure_code = ''
-for field_name, field_type in EntityState._fields_:
-    structure_code += {
-        c_uint: 'I',
-        c_float: 'f',
-        c_double: 'd',
-        c_bool: '?',
-        c_char: 'c',
-        c_int: 'i',
-    }[field_type]
-
-constant_fields = 'is_player', 'is_vehicle', 'm1', 'm2', 'm3'
-
-EntityStateTuple = namedtuple("EntityStateTuple", [field_name for field_name, unused_field_type in EntityState._fields_])
+        # This structure code is what we'll *actually* use to read the struct.
+        self.structure_code = ''
+        for field_name, field_type in self.EntityState._fields_:
+            self.structure_code += {
+                c_uint: 'I',
+                c_float: 'f',
+                c_double: 'd',
+                c_bool: '?',
+                c_char: 'c',
+                c_int: 'i',
+            }[field_type]
+        self.EntityStateTuple = namedtuple(
+            "EntityStateTuple", 
+            [field_name for field_name, unused_field_type in self.EntityState._fields_] + ['protocol_definition'],
+            defaults=([None]*len(self.EntityState._fields_)) + [self]
+        )
 
 
 def get_bbox(entity_state_tuple):
@@ -170,7 +112,7 @@ def xorchecksum(data):
     return checksum
 
 
-def is_valid(entity_state, max_abs=1e7, max_abs_xy=1e4):
+def is_valid(EntityStateTuple, entity_state, max_abs=1e7, max_abs_xy=1e4):
     """A crude additional check of whether a packet is reasonable.
     
     TODO: Figure out what's causing unreasonable packets, that still have a valid checksum.
@@ -197,14 +139,32 @@ def read_data(fname):
 
     # We'll accumulate structs here.
     entities = []
+    i = 0
 
     # Every struct starts with a 3-byte marker.
     marker = b'GTAGTA'
 
+    # Select a protocol version.
+    with open(fname, "rb") as f:
+        bytes = f.read()
+    pv_tok1 = b'PROTOCOL_VERSION>>'
+    pv_tok2 = b'<<PROTOCOL_VERSION'
+    if not (pv_tok1 in bytes[:100] and pv_tok2 in bytes[:100]):
+        protocol_version = 'undefined'
+    else:
+        # This is a protocol version header.
+        # Read it so we know which data definition to use, and then skip it.
+        i += len(pv_tok1)
+        pv_bstr_len = bytes[i:].find(pv_tok2)
+        protocol_version = bytes[i:i+pv_bstr_len].decode('ascii')
+        print('Protocol version: {}'.format(protocol_version))
+        i += pv_bstr_len + len(pv_tok2)
+        
     # As explained above, we'll read chunks of the larger size,
     # but then feed only the smaller first part into struct.unpack().
-    item_size = struct.calcsize(structure_code)
-    window_size = sizeof(EntityState)
+    protocol_definition = ProtocolDefinition(protocol_version)
+    item_size = struct.calcsize(protocol_definition.structure_code)
+    window_size = sizeof(protocol_definition.EntityState)
     assert window_size >= item_size
     
     num_skips = 0
@@ -214,24 +174,6 @@ def read_data(fname):
     num_packets_attempted = 0
     warnable_skipsize = max(abs(window_size - item_size), 3)
     failures = []
-
-    with open(fname, "rb") as f:
-        bytes = f.read()
-
-    i = 0
-
-    pv_tok1 = b'PROTOCOL_VERSION>>'
-    pv_tok2 = b'<<PROTOCOL_VERSION'
-    if not (pv_tok1 in bytes[:100] and pv_tok2 in bytes[:100]):
-        protocol_version = 'undefined'
-    else:
-        # This is a protocol version header.
-        # Read it for future use, and then skip it.
-        i += len(pv_tok1)
-        pv_bstr_len = bytes[i:].find(pv_tok2)
-        protocol_version = bytes[i:i+pv_bstr_len].decode('ascii')
-        print('Protocol version: {}'.format(protocol_version))
-        i += pv_bstr_len + len(pv_tok2)
         
     pbar = tqdm(total=len(bytes)/1024., unit='kbytes', desc='Reading loaded file')
     while True:
@@ -264,10 +206,10 @@ def read_data(fname):
             item_chunk = full_chunk[:item_size]
             if len(item_chunk) < item_size:
                 break
-            datum_struct = struct.unpack(structure_code, item_chunk)
+            datum_struct = struct.unpack(protocol_definition.structure_code, item_chunk)
 
             # Construct a more convenient form.
-            entity = EntityStateTuple(*datum_struct)
+            entity = protocol_definition.EntityStateTuple(*datum_struct)
             num_packets_attempted += 1
 
             # Check the checksum. Note that the checksum is an
@@ -286,7 +228,7 @@ def read_data(fname):
 
             # If the packets passes our test, we'll add it to the list.
             if checksum == checksum_target:
-                if is_valid(entity):
+                if is_valid(protocol_definition.EntityStateTuple, entity):
                     entities.append(entity)
                     failures.append(0)
                 else:
@@ -382,8 +324,16 @@ class Track:
     def count(self):
         return len(self._entities)
 
+    @property
+    def EntityStateTuple(self):
+        return self.protocol_definition.EntityStateTuple
+
+    @property
+    def protocol_definition(self):
+        return self._entities[0].protocol_definition
+
     def get_interpolated_state(self, wall_time):
-        return EntityStateTuple(*[self.get_interpolator(k)(wall_time) for (k, unused_field_type) in EntityState._fields_])
+        return self.EntityStateTuple(*[self.get_interpolator(k)(wall_time) for k in self.EntityStateTuple._fields])
 
     def get(self, field, time):
         return self.get_interpolator(field)(time)
@@ -522,7 +472,7 @@ class Track:
             Interpolator = NearestFetcher
 
         if field not in self.interpolators:
-            if field in constant_fields:
+            if field in self.protocol_definition.constant_fields:
                 assert len(list(set(self._get_data(field)))) == 1
             x = self.times
             y = self._get_data(field)
@@ -576,6 +526,7 @@ class NearestFetcher:
 AFFINITY_KEYS = 'posx', 'posy', 'posz', 'wall_time'
 AFFINITY_KEY_WEIGHTS = 1.0, 1.0, 1.0, 100.0
 
+
 class ScalarInterpolator:
 
     def __init__(self, BaseInterpolator, x, y, **kw):
@@ -625,7 +576,6 @@ class TrackManager:
         ax.set_xlabel('$x$ ($[m]$)')
         ax.set_ylabel('$y$ ($[m]$)')
         return fig, ax
-
 
     def __init__(self, entities_or_binfpath=None, pbar=True):
         self.trackgroups = {}
@@ -927,6 +877,11 @@ class TrackManager:
 
         return ax.get_figure(), ax
 
+    @property
+    def protocol_definition(self):
+        return self.tracks[0].protocol_definition
+
+
 def read_data_main(plot_3d=False, fname=join(HOME, 'data', 'gta', 'velocity_prediction'), search_for_truncated=False):
     if fname.endswith('\\') or fname.endswith('/') or not fname.endswith('.bin'):
         from glob import glob
@@ -947,15 +902,16 @@ def read_data_main(plot_3d=False, fname=join(HOME, 'data', 'gta', 'velocity_pred
     n_merged = track_manager.merge_player_tracks()
     if n_merged:
         print('Merged away', n_merged, 'player tracks.')
+
     # n_merged = track_manager.merge_tracks_by_id()
     # # if n_merged:
     # print('Merged away', n_merged, 'tracks by ID.')
 
     t_mean = (track_manager.tmin + track_manager.tmax) / 2.
-    track_manager.show_occupancy(t_mean)
+    if track_manager.protocol_definition.version >= version.parse('2'):
+        track_manager.show_occupancy(t_mean)
     #active_tracks = track_manager.get_active_tracks(t_mean)
  
-
     # Make some pretty plots.
     fig_dir = join(HERE, '..', '..', 'doc')
 
