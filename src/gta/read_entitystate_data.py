@@ -9,6 +9,7 @@ from ctypes import c_uint, c_int, c_double, c_float, c_bool, Structure, c_char, 
 from tqdm.auto import tqdm
 import struct
 import matplotlib.pyplot as plt
+from matplotlib.patches import Polygon
 # Allow for 3D matplotlib plots.
 from mpl_toolkits.mplot3d import Axes3D
 from warnings import warn
@@ -119,6 +120,39 @@ for field_name, field_type in EntityState._fields_:
 constant_fields = 'is_player', 'is_vehicle', 'm1', 'm2', 'm3'
 
 EntityStateTuple = namedtuple("EntityStateTuple", [field_name for field_name, unused_field_type in EntityState._fields_])
+
+
+def get_bbox(entity_state_tuple):
+    """
+    Get the bounding box of an entity.
+    """
+    before_rotation = np.array([
+        [
+            entity_state_tuple.posx - entity_state_tuple.bboxdx/2,
+            entity_state_tuple.posy - entity_state_tuple.bboxdy/2,
+        ],
+        [
+            entity_state_tuple.posx + entity_state_tuple.bboxdx/2,
+            entity_state_tuple.posy - entity_state_tuple.bboxdy/2,
+        ],
+        [
+            entity_state_tuple.posx + entity_state_tuple.bboxdx/2,
+            entity_state_tuple.posy + entity_state_tuple.bboxdy/2,
+        ],
+        [
+            entity_state_tuple.posx - entity_state_tuple.bboxdx/2,
+            entity_state_tuple.posy + entity_state_tuple.bboxdy/2,
+        ],
+    ])
+
+    rotation_angle = np.radians(entity_state_tuple.yaw)
+    rotation_matrix = np.array([
+        [np.cos(rotation_angle), -np.sin(rotation_angle)],
+        [np.sin(rotation_angle), np.cos(rotation_angle)],
+    ])
+    offset = np.array([entity_state_tuple.posx, entity_state_tuple.posy])
+    after_rotation = np.dot(rotation_matrix, (before_rotation - offset).T).T + offset
+    return after_rotation
 
 
 def xorchecksum(data):
@@ -576,6 +610,23 @@ def cached_TrackManager_fetch(binfpath):
 
 class TrackManager:
 
+    def show_occupancy(self, t):
+        active_tracks = self.get_active_tracks(t)
+        fig, ax = plt.subplots()
+        for track in active_tracks:
+            entity_state_tuple = track.get_interpolated_state(t)
+            points = get_bbox(entity_state_tuple)
+            # ax.scatter(*points.T, s=2, c='k')
+            c = 'red' if track.is_player else ('blue' if track.is_vehicle else 'green')
+            ax.add_patch(Polygon(points, closed=True, fill=True, alpha=.9, color=c))
+            points_plus = np.vstack([points, points[:1]])
+            ax.plot(*points_plus.T, color='k', alpha=.5)
+        ax.set_aspect('equal')
+        ax.set_xlabel('$x$ ($[m]$)')
+        ax.set_ylabel('$y$ ($[m]$)')
+        return fig, ax
+
+
     def __init__(self, entities_or_binfpath=None, pbar=True):
         self.trackgroups = {}
         if entities_or_binfpath is not None:
@@ -894,13 +945,14 @@ def read_data_main(plot_3d=False, fname=join(HOME, 'data', 'gta', 'velocity_pred
 
     # n_merged = track_manager.merge_tracks_where_possible()
     n_merged = track_manager.merge_player_tracks()
-    # if n_merged:
-    print('Merged away', n_merged, 'player tracks.')
+    if n_merged:
+        print('Merged away', n_merged, 'player tracks.')
     # n_merged = track_manager.merge_tracks_by_id()
     # # if n_merged:
     # print('Merged away', n_merged, 'tracks by ID.')
 
-    #t_mean = (track_manager.tmin + track_manager.tmax) / 2.
+    t_mean = (track_manager.tmin + track_manager.tmax) / 2.
+    track_manager.show_occupancy(t_mean)
     #active_tracks = track_manager.get_active_tracks(t_mean)
  
 
