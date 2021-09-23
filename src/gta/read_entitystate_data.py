@@ -189,17 +189,13 @@ def read_data(fname):
     pv_tok1 = b'PROTOCOL_VERSION>>'
     pv_tok2 = b'<<PROTOCOL_VERSION'
     if not (pv_tok1 in bytes[:100] and pv_tok2 in bytes[:100]):
-        protocol_version = -1
+        protocol_version = 'undefined'
     else:
         # This is a protocol version header.
         # Read it for future use, and then skip it.
         i += len(pv_tok1)
         pv_bstr_len = bytes[i:].find(pv_tok2)
         protocol_version = bytes[i:i+pv_bstr_len].decode('ascii')
-        try:
-            protocol_version = int(protocol_version)
-        except ValueError:
-            warn('Could not parse protocol version: {}'.format(protocol_version))
         print('Protocol version: {}'.format(protocol_version))
         i += pv_bstr_len + len(pv_tok2)
         
