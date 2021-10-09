@@ -21,8 +21,11 @@ DATA_DIR = join(HOME, 'data', 'gta', 'velocity_prediction')
 from joblib import Memory
 memory = Memory(location=DATA_DIR, verbose=11)
 
+try:
+    from . import protocol_versions
+except ImportError:
+    import protocol_versions
 
-import protocol_versions
 from ctypes import c_uint, c_int, c_double, c_float, c_bool, Structure, c_char, sizeof
 
 
@@ -70,20 +73,20 @@ def get_bbox(entity_state_tuple):
     """
     before_rotation = np.array([
         [
-            entity_state_tuple.posx - entity_state_tuple.bboxdx/2,
-            entity_state_tuple.posy - entity_state_tuple.bboxdy/2,
+            -entity_state_tuple.bboxdx/2,
+            -entity_state_tuple.bboxdy/2,
         ],
         [
-            entity_state_tuple.posx + entity_state_tuple.bboxdx/2,
-            entity_state_tuple.posy - entity_state_tuple.bboxdy/2,
+            entity_state_tuple.bboxdx/2,
+            -entity_state_tuple.bboxdy/2,
         ],
         [
-            entity_state_tuple.posx + entity_state_tuple.bboxdx/2,
-            entity_state_tuple.posy + entity_state_tuple.bboxdy/2,
+            entity_state_tuple.bboxdx/2,
+            entity_state_tuple.bboxdy/2,
         ],
         [
-            entity_state_tuple.posx - entity_state_tuple.bboxdx/2,
-            entity_state_tuple.posy + entity_state_tuple.bboxdy/2,
+            -entity_state_tuple.bboxdx/2,
+            entity_state_tuple.bboxdy/2,
         ],
     ])
 
@@ -93,7 +96,7 @@ def get_bbox(entity_state_tuple):
         [np.sin(rotation_angle), np.cos(rotation_angle)],
     ])
     offset = np.array([entity_state_tuple.posx, entity_state_tuple.posy])
-    after_rotation = np.dot(rotation_matrix, (before_rotation - offset).T).T + offset
+    after_rotation = np.dot(rotation_matrix, before_rotation.T).T + offset
     return after_rotation
 
 
@@ -175,7 +178,7 @@ def read_data(fname):
     warnable_skipsize = max(abs(window_size - item_size), 3)
     failures = []
         
-    pbar = tqdm(total=len(bytes)/1024., unit='kbytes', desc='Reading loaded file')
+    pbar = tqdm(total=int(np.math.ceil(len(bytes)/1024.)), unit='kbytes', desc='Reading loaded file')
     while True:
 
         # Step the progressbar in units of kilobytes.
@@ -561,7 +564,7 @@ def cached_TrackManager_fetch(binfpath):
 
 class TrackManager:
 
-    def show_occupancy(self, t):
+    def show_occupancy(self, t, show_tracks=True):
         active_tracks = self.get_active_tracks(t)
         fig, ax = plt.subplots()
         for track in active_tracks:
@@ -573,17 +576,119 @@ class TrackManager:
             points_plus = np.vstack([points, points[:1]])
             ax.plot(*points_plus.T, color='k', alpha=.5)
         ax.set_aspect('equal')
+        if show_tracks:
+            xlim = ax.get_xlim()
+            ylim = ax.get_ylim()
+            for track in active_tracks:
+                c = 'red' if track.is_player else ('blue' if track.is_vehicle else 'green')
+                lw = 4 if track.is_player else 2
+                linestyle = '--' if track.is_player else '-'
+                ax.plot(track._get_data('posx'), track._get_data('posy'), color=c, alpha=.25, linewidth=lw, linestyle=linestyle)
+            ax.set_xlim(xlim)
+            ax.set_ylim(ylim)
         ax.set_xlabel('$x$ ($[m]$)')
         ax.set_ylabel('$y$ ($[m]$)')
         return fig, ax
 
+    def local_occupancy_grid(self, t, resolution=(100, 100), radii=(30, 30), focal_track=None, z_radius=8.):
+
+        if focal_track is None:
+            focal_track = self.player_veh
+
+        active_tracks = self.get_active_tracks(t)
+
+        if focal_track not in active_tracks:
+            raise ValueError
+
+        R = lambda angle_deg: np.array([
+            [np.cos(np.radians(angle_deg)), -np.sin(np.radians(angle_deg))],
+            [np.sin(np.radians(angle_deg)), np.cos(np.radians(angle_deg))]
+        ])
+
+        def local_to_global(local_points):
+            Rback = R(entity.yaw)
+            offset = np.array([entity.posx, entity.posy])
+            return (Rback @ local_points.T).T + offset
+
+        # def global_to_local(global_points):
+        #     Rto = R(-entity.yaw)
+        #     offset = np.array([entity.posx, entity.posy])
+        #     return (Rto @ (global_points - offset).T).T
+
+        def points_in_polygon(polygon, pts):
+            pts = np.asarray(pts,dtype='float32')
+            polygon = np.asarray(polygon,dtype='float32')
+            contour2 = np.vstack((polygon[1:], polygon[:1]))
+            test_diff = contour2-polygon
+            mask1 = (pts[:,None] == polygon).all(-1).any(-1)
+            m1 = (polygon[:,1] > pts[:,None,1]) != (contour2[:,1] > pts[:,None,1])
+            slope = ((pts[:,None,0]-polygon[:,0])*test_diff[:,1])-(test_diff[:,0]*(pts[:,None,1]-polygon[:,1]))
+            m2 = slope == 0
+            mask2 = (m1 & m2).any(-1)
+            m3 = (slope < 0) != (contour2[:,1] < polygon[:,1])
+            m4 = m1 & m3
+            count = np.count_nonzero(m4,axis=-1)
+            mask3 = ~(count%2==0)
+            mask = mask1 | mask2 | mask3
+            return mask
+
+        def intersects_with_point(entity, XY):
+            poly = get_bbox(entity)
+            return points_in_polygon(poly, XY)
+
+            
+
+        entity = focal_track.get_interpolated_state(t)
+
+        xe, ye = entity.posx, entity.posy
+        left = -radii[0]
+        right = radii[0]
+        bottom = -radii[1]
+        top = radii[1]
+        points_in_focal_frame = np.hstack([
+            a.ravel().reshape((-1, 1))
+            for a in np.meshgrid(
+                np.linspace(left, right, resolution[0]),
+                np.linspace(bottom, top, resolution[1]),
+                indexing='ij', # Returns arrays of shape Nx, Ny
+            )
+        ])
+
+        points = local_to_global(points_in_focal_frame)
+
+        mask = np.zeros(resolution, dtype=bool)
+
+        for track in active_tracks:
+            other_entity = track.get_interpolated_state(t)
+            if abs(other_entity.posz - entity.posz) > z_radius:
+                continue
+            mask = np.logical_or(
+                mask,
+                intersects_with_point(other_entity, points).reshape(resolution)
+            )
+        mask = mask.T # Go back to Ny, Nx
+        return np.logical_not(mask)
+
     def __init__(self, entities_or_binfpath=None, pbar=True):
-        self.trackgroups = {}
-        if entities_or_binfpath is not None:
-            if isinstance(entities_or_binfpath, str):
-                entities_or_binfpath = read_data(entities_or_binfpath)
-            for entity in entities_or_binfpath if not pbar else tqdm(entities_or_binfpath, unit='entities', desc='Associating entities with tracks'):
+        self.entities_or_binfpath = entities_or_binfpath
+        self.pbar = pbar
+        if isinstance(self.entities_or_binfpath, str):
+            self.entities_or_binfpath = read_data(self.entities_or_binfpath)
+
+    @property
+    def trackgroups(self):
+        if not hasattr(self, '_trackgroups'):
+            self._trackgroups = {}
+            assert self.entities_or_binfpath is not None
+            for entity in self.entities_or_binfpath if not self.pbar else tqdm(
+                self.entities_or_binfpath, unit='entities', desc='Associating entities with tracks'
+            ):
                 self.associate(entity)
+        return self._trackgroups
+
+    @trackgroups.setter
+    def trackgroups(self, value):
+        self._trackgroups = value
 
     def associate(self, entity):
         associated = False
@@ -614,13 +719,19 @@ class TrackManager:
                 active_tracks.append(track)
         return active_tracks
 
+    def tmin_from_tracks(self):
+        return min([track.tmin for track in self.tracks])
+
+    def tmax_from_tracks(self):
+        return max([track.tmax for track in self.tracks])
+
     @property
     def tmin(self):
-        return min([track.tmin for track in self.tracks])
+        return min([entity.wall_time for entity in self.entities_or_binfpath])
 
     @property
     def tmax(self):
-        return max([track.tmax for track in self.tracks])
+        return max([entity.wall_time for entity in self.entities_or_binfpath])
 
     @property
     def player_ped(self):
@@ -873,7 +984,7 @@ class TrackManager:
             if plot_3d:
                 ax.set_zlabel('z')
 
-        fig.tight_layout()
+        ax.get_figure().tight_layout()
 
         return ax.get_figure(), ax
 
@@ -882,7 +993,7 @@ class TrackManager:
         return self.tracks[0].protocol_definition
 
 
-def read_data_main(plot_3d=False, fname=join(HOME, 'data', 'gta', 'velocity_prediction'), search_for_truncated=False):
+def read_data_main(plot_3d=False, fname=join(HOME, 'data', 'gta', 'velocity_prediction', 'Protocol V2'), search_for_truncated=False):
     if fname.endswith('\\') or fname.endswith('/') or not fname.endswith('.bin'):
         from glob import glob
         if search_for_truncated:
