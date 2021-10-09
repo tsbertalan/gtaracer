@@ -34,7 +34,8 @@ class IOController:
 
     def __init__(self, throttle=None, minimum_throttle=None, steer_limit=0.5, kp=.1, ki=0.02, kd=0.05, 
         pretuned='car', filters_present='carmission', error_kind='cte', draw_on_basemap=False,
-        do_perspective_transform=True, dry_run=False, use_minimap=False
+        do_perspective_transform=True, dry_run=False, use_minimap=False,
+        throttle_disabled=False,
         ):
         self.error_kind = error_kind
         if error_kind == 'cte':
@@ -74,7 +75,7 @@ class IOController:
             race=(.8, .1, .01), 
             rcrace=(.8, .05, .01), 
             boatrace=(1.6, .06, .005),
-            boat=(.8, 0.02, 0), 
+            boat=(1.6, 0.06, 0.005), 
             sailboat=(.9, .05, 0)
         )[pretuned]
 
@@ -134,6 +135,7 @@ class IOController:
                 minimum_throttle = .4
         self.minimum_throttle = min(self.throttle_nominal, minimum_throttle)
         self.throttle_fuzz = 0.01
+        self.throttle_disabled = throttle_disabled
 
         self.brake = .0
         self.last_cycle_time = time.time()
@@ -157,7 +159,10 @@ class IOController:
             return out
 
     def get_heading_error(self):
-        tm, basemap = self.gameWindow.get_track_mask(basemap_kind='minimap', do_erode=False, filters_present=self.filters_present, do_perspective_transform=self.do_perspective_transform)
+        tm, basemap = self.gameWindow.get_track_mask(
+            basemap_kind='minimap', do_erode=False, filters_present=self.filters_present,
+            do_perspective_transform=self.do_perspective_transform
+        )
         tm = np.array(tm)
 
         rows, cols = tm.shape[:2]
@@ -362,7 +367,11 @@ class IOController:
     def step(self):
        
         self._last_steering = steer = self.compute_control()
-        throttle = self.compute_throttle()
+
+        if self.throttle_disabled:
+            throttle = None
+        else:
+            throttle = self.compute_throttle()
         if not self.dry_run:
             applied = self.gpad(steer=steer, accel=throttle, decel=self.brake)
             steer = applied[0]
@@ -505,10 +514,12 @@ class OptimalController(IOController):
 
 
 DEFAULT_CAR_THROTTLE = .36
-DEFAULT_TRUCK_THROTTLE = 0.4
+DEFAULT_TRUCK_THROTTLE = 0.42
 DEFAULT_BOAT_THROTTLE = 0.8
-TOO_FEW_POINTS_MAXITER_DEFAULT = 3500
+TOO_FEW_POINTS_MAXITER_DEFAULT = 1000
 DEFAULT_MODE = 'carmission'
+DEFAULT_DRY_RUN = False
+DEFAULT_DISABLE_THROTTLE = False
 
 
 def main():
@@ -526,6 +537,7 @@ def main():
   
     parser.add_argument('--pid_tuning', type=str, default=None)
     parser.add_argument('--dont_randomize_dest_on_stopiteration', action='store_true', default=True)
+    parser.add_argument('--throttle_disabled', action='store_true', default=DEFAULT_DISABLE_THROTTLE)
     parser.add_argument('--randomize_dest_every_n_seconds', type=float, default=None)
     args = parser.parse_args()
     logger.info('Got args: {}'.format(args))
@@ -568,9 +580,11 @@ def main():
         error_kind=args.error_kind, 
         pretuned=args.pid_tuning,
         filters_present=filters_present,
+        do_perspective_transform=not boat,
         steer_limit=args.steer_limit,
         minimum_throttle=args.minimum_throttle,
-        dry_run=False,
+        dry_run=DEFAULT_DRY_RUN,
+        throttle_disabled=args.throttle_disabled,
     )
 
     last_gps_randomization_time = time.time()

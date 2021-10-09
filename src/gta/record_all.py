@@ -23,7 +23,7 @@ if __name__ == '__main__':
 
     # Record everything with the unified recorder.
     print('Recording to %s' % args.record_path)
-    recorder = UnifiedRecorder()
+    recorder = UnifiedRecorder(gamepadPeriod=0)
     recorder.create_subprocesses()
     recorder.start()
 

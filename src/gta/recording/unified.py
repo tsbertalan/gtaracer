@@ -12,7 +12,9 @@ class UnifiedRecorder(BaseRecorder):
     def __init__(self, visionPeriod=.01, gamepadPeriod=.01, includeKeyboard=True):
         super().__init__(period=min(visionPeriod, gamepadPeriod), Task=None)
         self.xrecorder = gta.recording.vision.VisionRecorder(period=visionPeriod)#, manager=self.manager)
-        self.yrecorders = [gta.recording.gamepad.GamepadRecorder(period=gamepadPeriod)]#, manager=self.manager)]
+        self.yrecorders = []#, manager=self.manager)]
+        if gamepadPeriod > 0:
+            self.yrecorders.append(gta.recording.gamepad.GamepadRecorder(period=gamepadPeriod))
         if includeKeyboard:
             self.yrecorders.append(gta.recording.keyboard.KeyboardRecorder())#manager=self.manager))
         self.includeKeyboard = includeKeyboard

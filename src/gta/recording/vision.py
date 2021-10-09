@@ -185,7 +185,7 @@ class GtaWindow(Window):
 
         # Make second number bigger if we tend to go into the right shoulder.
         self.car_origin = self.wscale(45, 47)
-        self.car_origin_micromap_perspectiveTransformed = self.wscale(46, 44.25)
+        self.car_origin_micromap_perspectiveTransformed = self.wscale(25, 17.5)
         self.car_origin_minimap = self.wscale(100, 110)
         self.car_origin_minimap_perspectivetransformed = self.wscale(100, 60)  # TODO: Retune these values.
         self.last_cycle_time = time.time()
@@ -262,9 +262,9 @@ class GtaWindow(Window):
     @staticmethod
     def perspective_minimap_to_micromap(minimap):
         DY, DX = minimap.shape[:2]
-        dx1 = int(0.3 * DX)
-        dx2 = int(0.4 * DX)
-        dy1 = int(0.7 * DY)
+        dx1 = int(0.4 * DX)
+        dx2 = int(0.45 * DX)
+        dy1 = int(0.8 * DY)
         dy2 = int(0.05 * DY)
         assert dx1 + dx2 < DX
         assert dy1 + dy2 < DY
