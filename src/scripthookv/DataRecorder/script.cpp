@@ -253,7 +253,7 @@ void update(BinaryWriter& binary_writer, std::ofstream& log, bool& is_currently_
 		// Don't do anything if the lock is set.
 		return;
 
-	if (IsKeyDown(VK_NUMPAD1)) {
+	if (IsKeyDown(0x59)) {  // 0x59 is the Y key.
 		if (!first_keyhit_seen) { // Only detect actual down changes; don't repeat while down.
 			if (is_currently_recording) {
 				// If we're currently recording, stop.
