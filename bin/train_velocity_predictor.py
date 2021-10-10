@@ -20,6 +20,7 @@ from os.path import join, expanduser, dirname
 
 HERE = dirname(__file__)
 
+
 class VelocityPredictor(pl.LightningModule):
     def __init__(self, window_size=4, color_channels=3):
         super().__init__()
@@ -293,9 +294,126 @@ def convert_image_pair_to_optical_flow(img1, img2):
     return flow
 
 
+class VelocityPredictorFromOpticalFlow(pl.LightningModule):
+    def __init__(self):
+        flow_channels = 2
+        super().__init__()
+
+        in_channels = flow_channels
+
+        self.layers = nn.Sequential(
+
+            nn.Conv2d(in_channels, 4, 3, 1),
+            nn.ReLU(),
+            nn.MaxPool2d(4, 4),
+
+            nn.Conv2d(4, 6, 3, 1),
+            nn.ReLU(),
+            nn.MaxPool2d(2, 2),
+
+            nn.Conv2d(6, 4, 3, 1),
+            nn.ReLU(),
+            nn.MaxPool2d(2, 2),
+
+            nn.Flatten(),
+
+            nn.LazyLinear(4),
+            nn.ReLU(),
+            
+            nn.Linear(4, 2),
+            nn.ReLU(),
+
+            nn.Linear(2, 1),
+
+        )
+
+    def forward(self, flow_images):
+        return self.layers(flow_images)
+
+    def training_step(self, batch, batch_idx):
+        flow_images, velocities = batch[0]
+        predictions = self(flow_images)
+        loss = F.mse_loss(predictions, velocities)
+        return {'loss': loss}
+
+    def configure_optimizers(self, lr=1e-4):
+        return torch.optim.Adam(self.parameters(), lr=lr)
 
 
+import scipy.spatial.transform
+def get_local_to_global_rot(st):
+#     yaw = np.radians(state_tuple.yaw)
+#     pitch = np.radians(state_tuple.pitch)
+#     roll = np.radians(state_tuple.roll)
+    return scipy.spatial.transform.Rotation.from_euler(
+        seq='XZY', 
+        angles=[st.pitch, st.yaw, st.roll], # Based on UVN camera from here http://athena.ecs.csus.edu/~gordonvs/165/resources/03-FundamentalsOf3D.pdf
+        degrees=True
+    )
 
+
+def pair_images_with_ego_velocities(pairing, LIMIT=None):
+    times = []
+    images = []
+    velocities = []
+    directional_velocities = []
+    forward_vectors = []
+    vvecs = []
+    poses = []
+    flow_from_previous = []
+    try:
+        if LIMIT is None:
+            LIMIT = len(pairing.image_recording.images)
+        for iimg, (img, t) in enumerate(zip(tqdm(pairing.image_recording.images[:LIMIT], unit='frames'), pairing.image_recording.times[:LIMIT])):
+            vel_recorded = False
+            for telemetry_recording in pairing.telemetry_recordings:            
+                tm = telemetry_recording.track_manager
+                for track in tm.get_active_tracks(t):
+                    if track.is_vehicle and track.is_player:
+                        st = track.get_interpolated_state(t)
+                        R = get_local_to_global_rot(st)
+                        p = R.apply(np.array([0, 1, 0]))
+                        v = np.array([st.velx, st.vely, st.velz])
+#                         yaw = np.radians(st.yaw)
+#                         pitch = np.radians(st.pitch)
+#                         p = np.array([
+#                             np.sin(yaw)*np.cos(pitch), 
+#                             np.cos(yaw)*np.cos(pitch), 
+#                             np.sin(pitch)
+#                         ])
+                        forward = (v @ p) > 0
+                        vel_meters_per_second = np.linalg.norm(v) * (1 if forward else -1)
+                        velocities.append(vel_meters_per_second)
+                        directional_velocities.append(v @ p)
+                        vvecs.append(v)
+                        poses.append(np.array([st.posx, st.posy, st.posz, st.roll, st.pitch, st.yaw]))
+                        forward_vectors.append(p)
+                        vel_recorded = True
+                        break
+                if vel_recorded:
+                    break
+            if vel_recorded:
+                images.append(img)
+                times.append(t)
+            #if iimg > 50:
+            #    raise KeyboardInterrupt
+            if iimg > 0:
+                flow = convert_image_pair_to_optical_flow(images[iimg-1], images[iimg])
+                flow_from_previous.append(flow)
+            else:
+                flow_from_previous.append(None)
+    except KeyboardInterrupt:
+        imax = min([len(z) for z in (times, images, velocities, directional_velocities, vvecs, poses, forward_vectors, flow_from_previous)])
+        times = times[:imax]
+        images = images[:imax]
+        velocities = velocities[:imax]
+        directional_velocities = directional_velocities[:imax]
+        vvecs = vvecs[:imax]
+        poses = poses[:imax]
+        forward_vectors = forward_vectors[:imax]
+        flow_from_previous = flow_from_previous[:imax]
+
+    return times, images, velocities, directional_velocities, vvecs, poses, forward_vectors, flow_from_previous
 
 if __name__ == '__main__':
     # train()
