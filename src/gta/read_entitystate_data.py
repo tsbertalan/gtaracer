@@ -16,15 +16,18 @@ from os.path import join, expanduser, dirname
 from packaging import version
 HOME = expanduser("~")
 HERE = dirname(__file__)
-DATA_DIR = join(HOME, 'data', 'gta', 'velocity_prediction')
-
-from joblib import Memory
-memory = Memory(location=DATA_DIR, verbose=11)
 
 try:
     from . import protocol_versions
+    from .train_velocity_predictor import VELOCITY_DATA_DIR
 except ImportError:
     import protocol_versions
+    from train_velocity_predictor import VELOCITY_DATA_DIR
+
+DATA_DIR = VELOCITY_DATA_DIR
+
+from joblib import Memory
+memory = Memory(location=DATA_DIR, verbose=11)
 
 from ctypes import c_uint, c_int, c_double, c_float, c_bool, Structure, c_char, sizeof
 
@@ -993,7 +996,7 @@ class TrackManager:
         return self.tracks[0].protocol_definition
 
 
-def read_data_main(plot_3d=False, fname=join(HOME, 'data', 'gta', 'velocity_prediction', 'Protocol V2'), search_for_truncated=False):
+def read_data_main(plot_3d=False, fname=join(VELOCITY_DATA_DIR, 'Protocol V2'), search_for_truncated=False):
     if fname.endswith('\\') or fname.endswith('/') or not fname.endswith('.bin'):
         from glob import glob
         if search_for_truncated:

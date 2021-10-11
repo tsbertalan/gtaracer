@@ -20,6 +20,12 @@ import matplotlib as mpl
 import matplotlib.animation
 
 
+try:
+    from .train_velocity_predictor import VELOCITY_DATA_DIR
+except ImportError:
+    from train_velocity_predictor import VELOCITY_DATA_DIR
+
+
 class ImageRecording:
 
     def __init__(self, fname):
@@ -40,18 +46,20 @@ class ImageRecording:
     def unload_data(self):
         if hasattr(self, '_data'):
             print('Unloading %s' % self)
-            del self._data
-            del self._gamepad_events
-            del self._keyboard_events
+            if hasattr(self, '_gamepad_events'):
+                del self._gamepad_events
+            if hasattr(self, '_keyboard_events'):
+                del self._keyboard_events
             del self._times
             del self._images
+            del self._data
 
             # Trigger garbage collection.
             import gc
             gc.collect()
 
     def load_data_idempotent(self):
-        if not hasattr(self, '_data'):
+        if not hasattr(self, '_data') or not hasattr(self, '_times'):
             print('Loading %s' % self)
             self._data = np.load(self.fname, allow_pickle=True)
             if len(self._data['Y']) == 2:
@@ -143,8 +151,12 @@ class PairedRecording:
     def unload_image_data(self):
         self.image_recording.unload_data()
 
+    @property
+    def save_name_base(self):
+        return self.image_recording.fname
+
     def write_video(self, **kwargs):
-        fname = self.image_recording.fname + '.gif'
+        fname = self.save_name_base + '.gif'
         print('Writing video to', fname)
 
         def get_images():
@@ -189,7 +201,7 @@ def save_known_pairings(data, dir_path=None):
         fp.write(json.dumps(known))
 
 
-def find_filenames(base_dir=join(HOME, 'data', 'gta', 'velocity_prediction', 'Protocol V1'), check_for_existing=True, save_known=True, pair_with_truncated_recs=False) -> dict:
+def find_filenames(base_dir=join(VELOCITY_DATA_DIR, 'Protocol V1'), check_for_existing=True, save_known=True, pair_with_truncated_recs=False) -> dict:
 
     known = {}
     if check_for_existing:
@@ -202,7 +214,7 @@ def find_filenames(base_dir=join(HOME, 'data', 'gta', 'velocity_prediction', 'Pr
     img_recs = [
         ImageRecording(fname) 
         for fname in all_npz 
-        if not fname.endswith('reduced.npz')
+        if not fname.endswith('reduced.npz') and not '_paired' in fname
     ]
     print('Found {} image recording(s) in {}.'.format(len(img_recs), base_dir))
 

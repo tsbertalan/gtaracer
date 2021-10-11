@@ -16,6 +16,8 @@ from sklearn.linear_model import LinearRegression, RANSACRegressor
 from sklearn.preprocessing import PolynomialFeatures
 
 from os.path import join, expanduser, dirname
+
+from gta.train_velocity_predictor import VELOCITY_DATA_DIR
 HERE = dirname(__file__)
 from sys import path
 path.append(join(HERE, '..'))
@@ -359,9 +361,7 @@ if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('--figdir', type=str, default=join(HERE, '..', '..', 'doc', 'figures'))
 
-    parser.add_argument('--data_path', type=str, default=join(
-        expanduser('~'), 'data', 'gta', 'velocity_prediction',
-    ))
+    parser.add_argument('--data_path', type=str, default=VELOCITY_DATA_DIR)
     args = parser.parse_args()
     figdir = args.figdir
     data_path = args.data_path
