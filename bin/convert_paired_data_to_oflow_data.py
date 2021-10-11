@@ -1,26 +1,27 @@
-import numpy as np, torch, matplotlib.pyplot as plt, pytorch_lightning
+from posixpath import basename
+import numpy as np
 from tqdm.auto import tqdm
-
 import cv2
-
 from os.path import join, exists, dirname, abspath
+
 import sys
 HERE = dirname(abspath(__file__))
 sys.path.append(join(HERE, '..', 'src'))
+import gta
 import gta.recording_videos
-
 import gta.train_velocity_predictor
 
 
-def main():
 
-    # data = gta.recording_videos.find_filenames(base_dir=join(gta.train_velocity_predictor.VELOCITY_DATA_DIR, 'Protocol V1'))
-    base_dir = join(gta.train_velocity_predictor.VELOCITY_DATA_DIR, 'Protocol V2')
+def main(base_dir=gta.default_configs.PROTOCOL_V2_DIR):
+
     data = gta.recording_videos.find_filenames(base_dir=base_dir)
+
+    existing = [basename(f) for f in gta.train_velocity_predictor.list_existing_oflow_savefiles(base_dir)]
 
     for pairing in tqdm(data['paired'], unit='pairing'):
 
-        npz_filename = pairing.save_name_base + '_paired_data.npz'
+        npz_filename = pairing.save_name_base + gta.train_velocity_predictor.OFLOW_SAVE_SUFFIX
 
         if not exists(npz_filename):
             flow_data, vel_data = pairing_to_arrays(pairing)
@@ -30,6 +31,10 @@ def main():
                 flow_data=flow_data,
                 vel_data=vel_data,
             )
+
+        else:
+            assert basename(npz_filename) in existing
+
 
 def pairing_to_arrays(pairing):
     telemetry_recording = pairing.telemetry_recordings[0]

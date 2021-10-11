@@ -4,23 +4,21 @@ from tqdm.auto import tqdm
 # matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import skimage.transform
-
+from glob import glob
 import cv2
 
 import torch
 from torch import nn
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
-from torch.utils.data import random_split
-from torchvision.datasets import MNIST
-from torchvision import transforms
 import pytorch_lightning as pl
+from gta.recording_videos import ImageRecording, TelemetryRecording
 
-from os.path import join, expanduser, dirname
+from os.path import join, dirname, basename
 
 HERE = dirname(__file__)
-HOME = expanduser('~')
-VELOCITY_DATA_DIR = join(HOME, 'data', 'gta', 'velocity_prediction')
+
+import gta
 
 
 def show_pairing_times(pairing, show_player_vehs=True):
@@ -60,6 +58,16 @@ def show_pairing_times(pairing, show_player_vehs=True):
     ax.set_yticklabels(labels)
     ax.set_xlabel('wall_time')
     ax.set_title('Recordings paired with %s' % basename(pairing.image_recording.fname))
+
+
+
+OFLOW_SAVE_SUFFIX = '_paired_data.npz'
+
+def list_existing_oflow_savefiles(base_dir=gta.default_configs.PROTOCOL_V2_DIR):
+    glob_pattern = join(base_dir, '*' + OFLOW_SAVE_SUFFIX)
+    return glob(glob_pattern)
+
+
 
 
 class VelocityPredictor(pl.LightningModule):
@@ -110,7 +118,7 @@ class VelocityPredictor(pl.LightningModule):
 
 def get_windowed_data():
     # Create windowed data
-    data_dir = VELOCITY_DATA_DIR
+    data_dir = gta.default_configs.VELOCITY_DATA_DIR
     from glob import glob
 
     all_data = {

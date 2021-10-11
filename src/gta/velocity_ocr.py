@@ -1,26 +1,13 @@
 import numpy as np
-
-# try:
-from PIL import Image
-# except ImportError:
-# import Image
-import pytesseract
-
 from tqdm.auto import tqdm
 from PIL import ImageEnhance
 import PIL.Image
 from pytesseract import image_to_string
 
 from scipy.interpolate import UnivariateSpline
-from sklearn.linear_model import LinearRegression, RANSACRegressor
-from sklearn.preprocessing import PolynomialFeatures
 
-from os.path import join, expanduser, dirname
-
-from gta.train_velocity_predictor import VELOCITY_DATA_DIR
-HERE = dirname(__file__)
-from sys import path
-path.append(join(HERE, '..'))
+from os.path import join, dirname, abspath
+HERE = dirname(abspath(__file__))
 
 import gta.robust_spline
 
@@ -361,7 +348,7 @@ if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('--figdir', type=str, default=join(HERE, '..', '..', 'doc', 'figures'))
 
-    parser.add_argument('--data_path', type=str, default=VELOCITY_DATA_DIR)
+    parser.add_argument('--data_path', type=str, default=gta.default_configs.VELOCITY_DATA_DIR)
     args = parser.parse_args()
     figdir = args.figdir
     data_path = args.data_path

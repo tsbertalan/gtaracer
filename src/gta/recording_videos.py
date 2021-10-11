@@ -5,25 +5,17 @@ HOME = expanduser('~')
 from glob import glob
 from datetime import datetime
 import numpy as np
-import cv2, PIL
+import cv2
 import matplotlib.pyplot as plt
-try:
-    from . import read_entitystate_data
-except ImportError:
-    import read_entitystate_data
+import gta.read_entitystate_data as read_entitystate_data
 from tqdm.auto import tqdm
 
 from typing import Iterator, Optional
 from pathlib import Path
 
 import matplotlib as mpl
-import matplotlib.animation
 
-
-try:
-    from .train_velocity_predictor import VELOCITY_DATA_DIR
-except ImportError:
-    from train_velocity_predictor import VELOCITY_DATA_DIR
+import gta
 
 
 class ImageRecording:
@@ -201,7 +193,7 @@ def save_known_pairings(data, dir_path=None):
         fp.write(json.dumps(known))
 
 
-def find_filenames(base_dir=join(VELOCITY_DATA_DIR, 'Protocol V1'), check_for_existing=True, save_known=True, pair_with_truncated_recs=False) -> dict:
+def find_filenames(base_dir=join(gta.default_configs.VELOCITY_DATA_DIR, 'Protocol V1'), check_for_existing=True, save_known=True, pair_with_truncated_recs=False) -> dict:
 
     known = {}
     if check_for_existing:
