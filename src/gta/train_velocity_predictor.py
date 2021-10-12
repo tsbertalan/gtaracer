@@ -348,10 +348,12 @@ def convert_image_pair_to_optical_flow(img1, img2):
 
 
 class VelocityPredictorFromOpticalFlow(pl.LightningModule):
-    def __init__(self):
+    def __init__(self, epochs_for_scheduler=100, batches_per_epoch_for_scheduler=10):
         flow_channels = 2
         super().__init__()
 
+        self.epochs_for_scheduler = epochs_for_scheduler
+        self.batches_per_epoch_for_scheduler = batches_per_epoch_for_scheduler
         in_channels = flow_channels
 
         self.layers = nn.Sequential(
@@ -383,14 +385,42 @@ class VelocityPredictorFromOpticalFlow(pl.LightningModule):
     def forward(self, flow_images):
         return self.layers(flow_images)
 
+    def predict_from_numpy(self, flow_images):
+        return self.forward(torch.from_numpy(flow_images).to(self.device)).detach().cpu().numpy()
+
     def training_step(self, batch, batch_idx):
-        flow_images, velocities = batch[0]
+        flow_images, velocities = batch[0]  # For some reason, in the training step, we get a list (len=1) of lists (len=2) of tensors,
+                                            # but in the validation step, we get a list (len=2) of tensors directly.
         predictions = self(flow_images)
         loss = F.mse_loss(predictions, velocities)
-        return {'loss': loss}
+        self.log('train_loss', loss, on_step=True, on_epoch=True)
+        return {
+            'loss': loss,
+            'log': {
+                'train_loss': loss.detach(),
+            },
+        }
+
+    def validation_step(self, batch, batch_idx):
+        flow_images, velocities = batch
+        predictions = self(flow_images)
+        loss = F.mse_loss(predictions, velocities)
+        self.log('val_loss', loss, on_step=False, on_epoch=True)
+        return {
+            'val_loss': loss,
+            'log': {
+                'val_loss': loss.detach(),
+            },
+        }
 
     def configure_optimizers(self, lr=1e-4):
-        return torch.optim.Adam(self.parameters(), lr=lr)
+        optimizer = torch.optim.Adam(self.parameters(), lr=lr)
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer, max_lr=5e-3, 
+            epochs=self.epochs_for_scheduler, steps_per_epoch=self.batches_per_epoch_for_scheduler,
+            verbose=False,
+        )
+        return [optimizer], [scheduler]
 
 
 import scipy.spatial.transform
