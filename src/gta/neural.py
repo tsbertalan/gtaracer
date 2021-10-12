@@ -63,7 +63,7 @@ class PbarCallback(pl.Callback):
             self._pbar = tqdm(total=self.n_epochs, unit=self.unit, desc=self.desc)
         return self._pbar
 
-    def on_epoch_end(self, trainer, pl_module):
+    def on_train_epoch_end(self, trainer, pl_module):
         self.pbar.update(1)
 
     def on_train_end(self, trainer, pl_module):
