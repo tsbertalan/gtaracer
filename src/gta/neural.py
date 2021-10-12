@@ -8,29 +8,60 @@ class LossRecorder(pl.Callback):
 
     def __init__(self):
         self.losses = []
+        self.val_losses = []
 
-    def on_before_backward(self, trainer, pl_module, loss):
-        # # Do garbage collection.
-        # import gc
-        # gc.collect()
-        self.losses.append(float(loss))
+    def on_train_batch_end(self, trainer, module, outputs, batch, batch_idx, dataloader_idx):
+        if 'loss' in outputs:
+            self.losses.append((
+                len(self.losses)+1,
+                # batch_idx,
+                float(outputs['loss'])
+            ))
 
-    def show(self, save_dir=None):
+    def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
+        if 'val_loss' in outputs:
+            self.val_losses.append((
+                len(self.losses), 
+                # batch_idx,
+                float(outputs['val_loss'])
+            ))
+
+    def show(self, save_path=None):
         fig, ax = plt.subplots(1, 1)
-        l = self.losses
-        ax.plot(l, label='history loss')
+        B = [b for (b, l) in self.losses]
+        L = [l for (b, l) in self.losses]
+        ax.plot(B, L, label='Loss')
+
+        if len(self.val_losses) > 0:
+            B = [b for (b, l) in self.val_losses]
+            L = [l for (b, l) in self.val_losses]
+            ax.scatter(B, L, label='Validation Loss')
+
         ax.legend()
-        ax.set_xlabel('batch')
-        ax.set_ylabel('loss')
+        ax.set_xlabel('Number of training batches seen')
+        ax.set_ylabel('Loss')
         ax.set_yscale('log')
-        if save_dir is not None:
+        if save_path is not None:
             from os.path import join
-            fig.savefig(join(save_dir, 'loss.png'))
+            fig.savefig(save_path)
+
+        return fig, ax
+
 
 class PbarCallback(pl.Callback):
 
-    def __init__(self, n_epochs):
-        self.pbar = tqdm(total=n_epochs, unit='epoch', desc='Training')
+    def __init__(self, n_epochs, unit='epoch', desc='Training'):
+        self.n_epochs = n_epochs
+        self.unit = unit
+        self.desc = desc
+
+    @property
+    def pbar(self):
+        # Create this lazily so that all the crap that pytorch prints before training
+        # is not printed over the progress bar.
+        if not hasattr(self, '_pbar'):
+            self._pbar = tqdm(total=self.n_epochs, unit=self.unit, desc=self.desc)
+        return self._pbar
 
     def on_epoch_end(self, trainer, pl_module):
         self.pbar.update(1)
