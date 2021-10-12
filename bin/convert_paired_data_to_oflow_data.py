@@ -24,12 +24,14 @@ def main(base_dir=gta.default_configs.PROTOCOL_V2_DIR):
         npz_filename = pairing.save_name_base + gta.train_velocity_predictor.OFLOW_SAVE_SUFFIX
 
         if not exists(npz_filename):
-            flow_data, vel_data = pairing_to_arrays(pairing)
+            flow_data, vel_data, times, vvecs = pairing_to_arrays(pairing)
 
             np.savez(
                 npz_filename,
                 flow_data=flow_data,
                 vel_data=vel_data,
+                times=times,
+                vvecs=vvecs,
             )
 
         else:
@@ -64,7 +66,7 @@ def pairing_to_arrays(pairing):
 
     flow_data_NCHW = np.rollaxis(flow_data, -1, 1)
 
-    return flow_data_NCHW, vel_data
+    return flow_data_NCHW, vel_data, times, vvecs
 
 
 if __name__ == '__main__':
