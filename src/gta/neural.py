@@ -70,7 +70,7 @@ class PbarCallback(pl.Callback):
         self.pbar.close()
 
 
-def get_dataloaders_kwargs_from_arrays(input_array, output_array, batch_size=32, train_frac=.9, 
+def get_dataloaders_kwargs_from_arrays(input_array, output_array, batch_size=300, train_frac=.9, 
     input_dtype='float32',
     output_dtype='float32',
     num_workers=8,
@@ -135,8 +135,7 @@ def get_dataloaders_kwargs_from_arrays(input_array, output_array, batch_size=32,
 
     assert train_frac <= 1.0 and train_frac > 0.0, 'train_frac must be in (0, 1]'
     train_count = int(train_frac * total_count)
-    val_frac = 1. - train_frac
-    val_count = int(val_frac * total_count)
+    val_count = total_count - train_count
     train_dataset, valid_dataset = torch.utils.data.random_split(
         full_dataset, (train_count, val_count)
     )
@@ -147,9 +146,9 @@ def get_dataloaders_kwargs_from_arrays(input_array, output_array, batch_size=32,
     
     kwargs = dict(
         train_dataloaders=[train_dataset_loader],
-        val_dataloaders=(None if not val_frac else torch.utils.data.DataLoader(
-            valid_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers
-        )),
+        val_dataloaders=(None if not val_count else [torch.utils.data.DataLoader(
+            valid_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers
+        )]),
     )
 
     return kwargs, full_dataset
