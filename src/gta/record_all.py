@@ -9,6 +9,7 @@ path.append(join(expanduser('~'), 'Dropbox', 'Projects', 'GTARacer', 'src'))
 import time
 from argparse import ArgumentParser
 from gta.recording.unified import UnifiedRecorder
+import gta.default_configs
 
 
 if __name__ == '__main__':

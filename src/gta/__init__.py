@@ -1,1 +1,1 @@
-import default_configs
+from . import default_configs
