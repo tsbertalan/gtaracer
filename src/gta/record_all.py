@@ -15,15 +15,15 @@ if __name__ == '__main__':
     parser = ArgumentParser()
 
     parser.add_argument('--record_path', type=str, default=None)
-    parser.add_argument('--record_time', type=int, default=100)
+    parser.add_argument('--record_time', type=int, default=50)
     args = parser.parse_args()
     if args.record_path is None:
         datename = '%s-gtav_recording.npz' % time.strftime('%Y-%m-%d-%H-%M-%S')
-        args.record_path = join(expanduser('~'), 'Dropbox', 'Projects', 'GTARacer', 'recordings', datename)
+        args.record_path = join(gta.default_configs.SCREEN_CONTROLLER_REC_DIR, datename)
 
     # Record everything with the unified recorder.
     print('Recording to %s' % args.record_path)
-    recorder = UnifiedRecorder(gamepadPeriod=0)
+    recorder = UnifiedRecorder(gamepadPeriod=0.01)
     recorder.create_subprocesses()
     recorder.start()
 

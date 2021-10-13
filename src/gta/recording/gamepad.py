@@ -12,6 +12,69 @@ import multiprocessing.queues
 
 from collections import deque
 
+AXIS_NAMES = {
+    0: 'left_stick_x',
+    1: 'left_stick_y',
+    3: 'right_stick_x',
+    4: 'right_stick_y',
+    2: 'left_trigger',
+    5: 'right_trigger',
+
+    13: 'left_bumper',
+    15: 'right_bumper',
+
+    14: 'left_stick_button',
+    16: 'right_stick_button',
+    
+    18: 'X',
+    6: 'A',
+    7: 'B',
+    19: 'Y',
+
+    9: 'dpad_d',
+    10: 'dpad_l',
+    11: 'dpad_r',
+    12: 'dpad_u',
+
+    8: 'back',
+    17: 'start',
+}
+
+
+def show_controller_track(npz_path):
+    import matplotlib.pyplot as plt
+    data = np.load(npz_path, allow_pickle=True)
+    assert 'Y' in data, 'No player response data recorded.'
+    Y = data['Y']
+    assert len(Y) == 2, 'Need both controller and keyboard recordings.'
+    controller_data, keyboard_data = Y
+
+    fig, ax = plt.subplots(figsize=(30, 8))
+
+    axes_seen = set([ty for (t, (ty, amt)) in controller_data])
+
+    linestyles = '-', '--', '-.', ':'
+    widths = 1, 4
+    for i, ty in enumerate(axes_seen):
+        linestyle = linestyles[i % len(linestyles)]
+        width = widths[i % len(widths)]
+        label = '%d: %s' % (ty, AXIS_NAMES.get(ty, ''))
+        label = label.replace('_', ' ').title()
+        ax.plot(
+            [t for (t, (ty_, amt)) in controller_data if ty_ == ty],
+            [amt for (t, (ty_, amt)) in controller_data if ty_ == ty],
+            label=label,
+            marker='.',
+            linestyle=linestyle,
+            linewidth=width,
+        )
+
+    ax.legend()
+    ax.set_xlabel('Time (s)')
+    ax.set_ylabel('Axis Amount')
+
+    plt.show()
+
 
 class _GamepadListener(object):
 
@@ -33,6 +96,7 @@ class _GamepadListener(object):
     def __call__(self):
         self.joystick.dispatch_events()
 
+
 def _dispatchEvents(resultsQueue, period):
     listener = _GamepadListener()
     while True:
@@ -42,6 +106,7 @@ def _dispatchEvents(resultsQueue, period):
             time.sleep(period)
         except KeyboardInterrupt:
             break
+
 
 class GamepadQuery(object):
 

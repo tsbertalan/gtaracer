@@ -120,7 +120,8 @@ class BaseRecorder(object):
         gta.utils.mkdir_p(dirname)
         print('Saving to %s ... ' % fpath, end='')
         toSave = self.toSave(**kwargs)
-        saver(fpath, dtype=object, **toSave)
+        toSave.setdefault('dtype', 'object')
+        saver(fpath, **toSave)
         print('done (%.3g s).' % (time.time() - start,))
         return toSave
 

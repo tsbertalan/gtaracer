@@ -7,6 +7,7 @@ import gta.recording.keyboard
 import gta.recording.gamepad
 from gta.recording import BaseRecorder
 
+
 class UnifiedRecorder(BaseRecorder):
 
     def __init__(self, visionPeriod=.01, gamepadPeriod=.01, includeKeyboard=True):
