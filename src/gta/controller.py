@@ -1,5 +1,13 @@
 #!/usr/bin/env python
 
+DEFAULT_CAR_THROTTLE = .36
+DEFAULT_TRUCK_THROTTLE = 0.42
+DEFAULT_BOAT_THROTTLE = 0.8
+TOO_FEW_POINTS_MAXITER_DEFAULT = 1000
+DEFAULT_MODE = 'carmission'
+DEFAULT_DRY_RUN = False
+DEFAULT_DISABLE_THROTTLE = False
+
 import numpy as np
 from simple_pid import PID
 import time
@@ -36,6 +44,8 @@ class IOController:
         pretuned='car', filters_present='carmission', error_kind='cte', draw_on_basemap=False,
         do_perspective_transform=True, dry_run=False, use_minimap=False,
         throttle_disabled=False,
+        curvature_reactive_throttle=True,
+        predict_velocity=False,
         ):
         self.error_kind = error_kind
         if error_kind == 'cte':
@@ -136,6 +146,7 @@ class IOController:
         self.minimum_throttle = min(self.throttle_nominal, minimum_throttle)
         self.throttle_fuzz = 0.01
         self.throttle_disabled = throttle_disabled
+        self.curvature_reactive_throttle = curvature_reactive_throttle
 
         self.brake = .0
         self.last_cycle_time = time.time()
@@ -253,6 +264,7 @@ class IOController:
                 display[int(r), np.arange(int(cc-radii[1]), int(cc+radii[1]+1)), i] = v
 
     def get_cte(self):
+        self._forward_angle = 0
         minimap = self.use_minimap  # Whether to keep the larger minimap or zoom in to the smaller "micromap".
         origin = (
             self.gameWindow.car_origin_micromap_perspectiveTransformed
@@ -333,6 +345,11 @@ class IOController:
             ow = offset * self.offset_weight
             aw = angle  * self.angle_weight
             err = ow + aw
+
+            # Evaluate the polynomial a little ahead of us as the "forward curvature".
+            # If _forward_angle is high, we're approaching a bend.
+            self._forward_angle = np.arctan(slope(origin[0]+self.slope_vertical_offset*1.5))
+
         else:
             err = 0
 
@@ -360,9 +377,25 @@ class IOController:
         y = (x - x2) * slope + y2
 
         if self.throttle_fuzz == 0:
-            return y
+            out = y
         else:
-            return float(np.random.normal(loc=y, scale=self.throttle_fuzz))
+            out = float(np.random.normal(loc=y, scale=self.throttle_fuzz))
+
+        if hasattr(self, '_forward_angle') and self.curvature_reactive_throttle:
+            # print('Unscaled throttle:', out, end=', ')
+            abstheta = abs(self._forward_angle)  # in [0, pi/2)
+            theta_1 = 0
+            theta_2 = np.pi/2
+            scale_1 = 1.0
+            scale_2 = 0.7
+            slope = (scale_2 - scale_1) / (theta_2 - theta_1)
+            scale = (abstheta - theta_1) * slope + scale_1
+            # scale = 1
+            out *= scale
+            # print('forward angle:', abstheta, ', scaling factor:', scale, end=', ')
+        # print('throttle:', out)
+
+        return out
 
     def step(self):
        
@@ -511,15 +544,6 @@ class OptimalController(IOController):
         logger.debug('dt=%.2f' % (t-self.last_cycle_time))
         self.last_cycle_time = t
         return applied
-
-
-DEFAULT_CAR_THROTTLE = .36
-DEFAULT_TRUCK_THROTTLE = 0.42
-DEFAULT_BOAT_THROTTLE = 0.8
-TOO_FEW_POINTS_MAXITER_DEFAULT = 1000
-DEFAULT_MODE = 'carmission'
-DEFAULT_DRY_RUN = False
-DEFAULT_DISABLE_THROTTLE = False
 
 
 def main():
