@@ -26,6 +26,11 @@ class UnifiedRecorder(BaseRecorder):
         for recorder in self.recorders:
             recorder.create_subprocesses()
 
+    def kill_subprocesses(self):
+        for recorder in self.recorders:
+            recorder.kill_subprocesses()
+        return super().kill_subprocesses()
+
     @property
     def resultsList(self):
         raise NotImplementedError
@@ -122,4 +127,7 @@ class UnifiedRecorder(BaseRecorder):
 
     def toSave(self):
         X, Y = self.XTYT()
+        # Preemptively convert X and Y to object arrays.
+        X = np.array(X, dtype=object)
+        Y = np.array(Y, dtype=object)
         return dict(X=X, Y=Y)

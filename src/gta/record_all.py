@@ -16,7 +16,7 @@ if __name__ == '__main__':
     parser = ArgumentParser()
 
     parser.add_argument('--record_path', type=str, default=None)
-    parser.add_argument('--record_time', type=int, default=50)
+    parser.add_argument('--record_time', type=int, default=100)
     args = parser.parse_args()
     if args.record_path is None:
         datename = '%s-gtav_recording.npz' % time.strftime('%Y-%m-%d-%H-%M-%S')
@@ -31,6 +31,12 @@ if __name__ == '__main__':
     for sec in tqdm(range(args.record_time), desc='Recording', unit='second'):
         time.sleep(1)
 
+    # Elevate warnings to errors.
+    import warnings
+    warnings.simplefilter('error')
+
     print('Saving data to %s' % args.record_path)
     recorder.stop()
     recorder.save(args.record_path)
+    recorder.kill_subprocesses()
+    exit(0)

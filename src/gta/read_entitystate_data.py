@@ -20,7 +20,7 @@ import gta
 import gta.protocol_versions as protocol_versions
 
 from joblib import Memory
-memory = Memory(location=gta.default_configs.VELOCITY_DATA_DIR, verbose=11)
+memory = Memory(location=gta.default_configs.VELOCITY_DATA_DIR, verbose=0)
 
 from ctypes import c_uint, c_int, c_double, c_float, c_bool, Structure, c_char, sizeof
 

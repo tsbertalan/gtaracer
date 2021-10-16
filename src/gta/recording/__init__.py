@@ -57,6 +57,12 @@ class BaseRecorder(object):
         self.waitPeriod = waitPeriod
         self.giveQueueDirectly = giveQueueDirectly
 
+    def kill_subprocesses(self):
+        print('Killing worker for', self.__class__.__name__)
+        if hasattr(self, 'worker'):
+            self.worker.terminate()
+            self.worker.join()
+
     def create_subprocesses(self):
         self.manager = Manager()
         self.workSignal = self.manager.Event()

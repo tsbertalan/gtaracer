@@ -64,7 +64,6 @@ def show_controller_track(npz_path):
             [t for (t, (ty_, amt)) in controller_data if ty_ == ty],
             [amt for (t, (ty_, amt)) in controller_data if ty_ == ty],
             label=label,
-            marker='.',
             linestyle=linestyle,
             linewidth=width,
         )

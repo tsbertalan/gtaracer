@@ -147,8 +147,16 @@ class PairedRecording:
     def save_name_base(self):
         return self.image_recording.fname
 
-    def write_video(self, **kwargs):
-        fname = self.save_name_base + '.gif'
+    @property
+    def vid_fname(self):
+        return self.save_name_base + '.gif'
+
+    def write_video(self, exit_on_exists=True, **kwargs):
+        fname = self.vid_fname
+        if exit_on_exists and exists(fname):
+            print('Video already exists: %s' % fname)
+            return None
+
         print('Writing video to', fname)
 
         def get_images():
@@ -193,7 +201,7 @@ def save_known_pairings(data, dir_path=None):
         fp.write(json.dumps(known))
 
 
-def find_filenames(base_dir=join(gta.default_configs.VELOCITY_DATA_DIR, 'Protocol V1'), check_for_existing=True, save_known=True, pair_with_truncated_recs=False) -> dict:
+def find_recording_pairs(base_dir=join(gta.default_configs.VELOCITY_DATA_DIR, 'Protocol V2'), check_for_existing=True, save_known=True, pair_with_truncated_recs=False) -> dict:
 
     known = {}
     if check_for_existing:
@@ -347,7 +355,7 @@ if __name__ == '__main__':
     
     # import sys.path
     # sys.path.append(join(HERE, '..'))
-    data = find_filenames()
+    data = find_recording_pairs()
     for paired_recording in tqdm(data['paired']):
         paired_recording.write_video()
         paired_recording.unload_image_data()

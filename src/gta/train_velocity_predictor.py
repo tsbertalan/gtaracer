@@ -60,14 +60,11 @@ def show_pairing_times(pairing, show_player_vehs=True):
     ax.set_title('Recordings paired with %s' % basename(pairing.image_recording.fname))
 
 
-
 OFLOW_SAVE_SUFFIX = '_paired_data.npz'
 
 def list_existing_oflow_savefiles(base_dir=gta.default_configs.PROTOCOL_V2_DIR):
     glob_pattern = join(base_dir, '*' + OFLOW_SAVE_SUFFIX)
     return glob(glob_pattern)
-
-
 
 
 class VelocityPredictor(pl.LightningModule):
@@ -115,6 +112,22 @@ class VelocityPredictor(pl.LightningModule):
         return torch.optim.Adam(self.parameters(), lr=lr)
 
 
+def shrink_img_for_oflow(img):
+    new_shape = 400, 300
+    return cv2.resize(img, new_shape)
+
+
+def reshape_oflow_for_net(data):
+    if len(data.shape) == 3:
+        # Add a batch dimension.
+        data = data[None, ...]
+    
+    if data.shape[-1] == 2:
+        # Reshape to NCWH for PyTorch.
+        data = data.transpose(0, 3, 1, 2)
+    
+    return data
+        
 
 def get_windowed_data():
     # Create windowed data
@@ -173,9 +186,6 @@ def get_windowed_data():
 
 def get_model_save_dir():
     return join(HERE, 'models')
-
-
-
 
 
 def train(batch_size=32):

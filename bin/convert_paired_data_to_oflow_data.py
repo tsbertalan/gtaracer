@@ -4,6 +4,8 @@ from tqdm.auto import tqdm
 import cv2
 from os.path import join, exists, dirname, abspath
 
+import gc
+
 import sys
 HERE = dirname(abspath(__file__))
 sys.path.append(join(HERE, '..', 'src'))
@@ -12,10 +14,9 @@ import gta.recording_videos
 import gta.train_velocity_predictor
 
 
-
 def main(base_dir=gta.default_configs.PROTOCOL_V2_DIR):
 
-    data = gta.recording_videos.find_filenames(base_dir=base_dir)
+    data = gta.recording_videos.find_recording_pairs(base_dir=base_dir)
 
     existing = [basename(f) for f in gta.train_velocity_predictor.list_existing_oflow_savefiles(base_dir)]
 
@@ -37,6 +38,9 @@ def main(base_dir=gta.default_configs.PROTOCOL_V2_DIR):
         else:
             assert basename(npz_filename) in existing
 
+        pairing.unload_image_data()
+        gc.collect()
+
 
 def pairing_to_arrays(pairing):
     telemetry_recording = pairing.telemetry_recordings[0]
@@ -52,13 +56,8 @@ def pairing_to_arrays(pairing):
     times, images, velocities, directional_velocities, vvecs, poses, forward_vectors, flow_from_previous = \
         gta.train_velocity_predictor.pair_images_with_ego_velocities(pairing, LIMIT=None)
 
-    new_shape = 400, 300
-
-    def shrink_img(img):
-        return cv2.resize(img, new_shape)
-
     flow_data = np.stack([
-            shrink_img(im)
+            gta.train_velocity_predictor.shrink_img_for_oflow(im)
             for im in flow_from_previous[1:]
         ], axis=0).astype('float32')
 

@@ -12,7 +12,6 @@ import gta.train_velocity_predictor
 import gta.neural
 
 
-
 def show_velocity_courses(base_dir=gta.default_configs.PROTOCOL_V2_DIR):
     model_save_dir = join(base_dir, 'models')
     
@@ -40,9 +39,12 @@ def show_velocity_courses(base_dir=gta.default_configs.PROTOCOL_V2_DIR):
 
 def main(
     base_dir=gta.default_configs.PROTOCOL_V2_DIR, 
-    # n_epochs=1024, LIMIT_OFLOWFILES=None, batch_size=300,
-    n_epochs=256, LIMIT_OFLOWFILES=1, batch_size=128,
-    n_gpus=1, n_dataloader_workers=8, 
+    n_epochs=1024,  batch_size=300,
+    # LIMIT_OFLOWFILES=None,
+    START_OFLOWFILES=10, LIMIT_OFLOWFILES=5,
+    # n_epochs=256, LIMIT_OFLOWFILES=1, batch_size=128,
+    n_gpus=0, n_dataloader_workers=8,
+    reload_from_previous=True,
     ):
     model_save_dir = join(base_dir, 'models')
     
@@ -57,8 +59,12 @@ def main(
 
     if LIMIT_OFLOWFILES is None:
         LIMIT_OFLOWFILES = len(oflow_data_paths)
+    if START_OFLOWFILES is None:
+        START_OFLOWFILES = 0
 
-    for path in oflow_data_paths:
+    paths = oflow_data_paths[START_OFLOWFILES:]
+    print('Trying to load', len(paths), 'oflow npz files.')
+    for path in paths:
 
         data = np.load(path)
 
@@ -106,6 +112,13 @@ def main(
         epochs_for_scheduler=n_epochs, 
         batches_per_epoch_for_scheduler=batches_per_epoch,
     )
+
+    save_path = gta.default_configs.OFLOW_VEL_MODEL_SAVE_PATH
+    if reload_from_previous:
+        # Load the model.
+        print('Loading from', save_path)
+        reloaded = gta.train_velocity_predictor.VelocityPredictorFromOpticalFlow.load_from_checkpoint(save_path)
+
 
     # Make a minimal batch of predictions so that the parameters are initialized.
     model.predict_from_numpy(input_array[[0]])
@@ -163,15 +176,8 @@ def main(
     loss_recorder.show(join(model_save_dir, 'loss.png'))
 
     # Save the model.
-    save_path = join(model_save_dir, 'oflow_vel_model.ckpt')
     print('Saving to', save_path)
     trainer.save_checkpoint(save_path)
-    print('Saved.')
-
-    # # Load the model.
-    # print('Loading from', save_path)
-    # reloaded = gta.train_velocity_predictor.VelocityPredictorFromOpticalFlow.load_from_checkpoint(save_path)
-    # print('Loaded.')
 
 
 def show_status(model, input_array, output_array, session_lengths):
