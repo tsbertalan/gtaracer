@@ -28,6 +28,7 @@ path.append(join(expanduser('~'), 'Dropbox', 'Projects', 'GTARacer', 'src'))
 
 import gta.recording.vision
 import gta.gameInputs.gamepad
+import gta.train_velocity_predictor
 from gta.random_destinations import change_gps
 
 from PIL import Image
@@ -73,6 +74,33 @@ class IOController:
         self.angle_weight = 4
         self.offset_weight = .5
         assert pretuned is not None
+
+        self.predict_velocity = predict_velocity
+        if predict_velocity:
+            self.velocity_prediction_history = []
+            save_path = gta.default_configs.OFLOW_VEL_MODEL_SAVE_PATH
+            print('Loading from', save_path)
+            self.oflow_velocity_model = gta.train_velocity_predictor.\
+                VelocityPredictorFromOpticalFlow.load_from_checkpoint(save_path)
+
+            def get_velocity(full_frame):
+                full_frame = np.array(full_frame)
+                current_small_image = gta.train_velocity_predictor.shrink_img_for_oflow(full_frame)
+                if not hasattr(self, '_last_small_image'):
+                    vel = None
+                else:
+                    oflow = gta.train_velocity_predictor.convert_image_pair_to_optical_flow(
+                        self._last_small_image, current_small_image
+                    )
+                    oflow = gta.train_velocity_predictor.reshape_oflow_for_net(oflow)
+                    vel = self.oflow_velocity_model.predict_from_numpy(oflow)
+                    vel = float(vel)
+                self._last_small_image = current_small_image
+                self.velocity_prediction_history.append((time.time(), vel))
+                return vel
+
+            self.get_velocity = get_velocity
+
 
         logger.info('PID pretuning: {}'.format(pretuned))
         kp, ki, kd = dict(
@@ -398,6 +426,16 @@ class IOController:
         return out
 
     def step(self):
+
+        t = time.time()
+        if hasattr(self, '_last_step_time'):
+            dt = t - self._last_step_time
+            self._controller_dt = dt
+        self._last_step_time = t
+
+        if self.predict_velocity:
+            vel = self.get_velocity(self.gameWindow.img)
+            print('Network predicted velocity:', vel)
        
         self._last_steering = steer = self.compute_control()
 
@@ -421,6 +459,18 @@ class IOController:
 
     def __del__(self):
         self.stop()
+    
+    def show_velocity_prediction_history(self):
+        if hasattr(self, 'velocity_prediction_history'):
+            fig, ax = plt.subplots()
+            VP = [vp for (t, vp) in self.velocity_prediction_history]
+            TP = [t for (t, vp) in self.velocity_prediction_history] 
+            ax.plot(TP, VP, label='Predicted')
+            ax.set_title('Velocity prediction history')
+            ax.set_xlabel('Time [s]')
+            ax.set_ylabel('Velocity [m/s]')
+            return fig, ax
+
 
     def plot(self, save=False):
         fig, ax = plt.subplots()
@@ -609,6 +659,7 @@ def main():
         minimum_throttle=args.minimum_throttle,
         dry_run=DEFAULT_DRY_RUN,
         throttle_disabled=args.throttle_disabled,
+        predict_velocity=True,
     )
 
     last_gps_randomization_time = time.time()
@@ -659,11 +710,13 @@ def main():
                 logger.warning('Stopping: %s' % tb)
                 break
 
-        if args.save_plot or args.show_plot:
-            controller.stop()
-            controller.plot(save=args.save_plot)
-            if args.show_plot:
-                plt.show()
+
+    if args.save_plot or args.show_plot:
+        controller.stop()
+        controller.show_velocity_prediction_history()
+        controller.plot(save=args.save_plot)
+        if args.show_plot:
+            plt.show()
    
 
 if __name__ == '__main__':
