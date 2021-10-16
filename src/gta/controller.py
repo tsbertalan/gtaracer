@@ -76,8 +76,8 @@ class IOController:
 
         logger.info('PID pretuning: {}'.format(pretuned))
         kp, ki, kd = dict(
-            car=(.22, .03, .1), 
-            chase=(.18, .005, .35), 
+            car=(.22, .03, .01), 
+            chase=(.18, .005, .05), 
             heavy=(.3, .03, .1),
             mission=(.22, .03, .01), 
             carmission=(.22, .03, .01),
