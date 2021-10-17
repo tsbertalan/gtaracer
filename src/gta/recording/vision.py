@@ -101,6 +101,51 @@ class D3DGrabber:
     def __del__(self):
         self.d.stop()
 
+    
+# Done by Frannecklp
+
+import cv2
+import numpy as np
+import win32gui, win32ui, win32con, win32api
+
+# class Win32Grabber:
+
+#     def __init__(self):
+        
+def grab_screen_win32(region=None):
+
+    hwin = win32gui.GetDesktopWindow()
+
+    hwindc = win32gui.GetWindowDC(hwin)
+    srcdc = win32ui.CreateDCFromHandle(hwindc)
+    memdc = srcdc.CreateCompatibleDC()
+
+    if region:
+        left,top,x2,y2 = region
+        width = x2 - left + 1
+        height = y2 - top + 1
+    else:
+        width = win32api.GetSystemMetrics(win32con.SM_CXVIRTUALSCREEN)
+        height = win32api.GetSystemMetrics(win32con.SM_CYVIRTUALSCREEN)
+        left = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
+        top = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
+
+    bmp = win32ui.CreateBitmap()
+    bmp.CreateCompatibleBitmap(srcdc, width, height)
+    memdc.SelectObject(bmp)
+    memdc.BitBlt((0, 0), (width, height), srcdc, (left, top), win32con.SRCCOPY)
+    
+    signedIntsArray = bmp.GetBitmapBits(True)
+    img = np.fromstring(signedIntsArray, dtype='uint8')
+    img.shape = (height,width,4)
+
+    srcdc.DeleteDC()
+    memdc.DeleteDC()
+    win32gui.ReleaseDC(hwin, hwindc)
+    win32gui.DeleteObject(bmp.GetHandle())
+
+    return cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
+            
 
 class Window:
     def __init__(self, wid):
@@ -126,7 +171,41 @@ class Window:
         # Experimentally found for windowed game at game size 1024x768, without hidpi scaling trick
         # return a+35, b+80, c+235, d + 203
         
-    def grab(self, bbox=None, relativeBbox=None, kind='PIL'):
+    def grab(self, bbox=None, relativeBbox=None, kind='ndarray'):
+        if not hasattr(self, '_last_fullscreen_grab'):
+            self.reset_fullscreen_grab()
+        
+        out = self._last_fullscreen_grab
+
+        full_height, full_width = out.shape[:2]
+
+        assert bbox is None
+        bbox = np.array([0, 0, full_width, full_height])
+        if relativeBbox is None:
+            relativeBbox = np.array([0, 0, 0, 0])
+
+        left, top, right, bot = bbox = bbox + relativeBbox
+        assert left < right
+        assert top < bot  # origin is top left
+
+        out = out[top:bot, left:right, ...]
+
+        if kind == 'PIL' and not isinstance(out, Image.Image):
+            # TODO: According to the README, d3dshot is even faster if you use numpy output (which we do, but then we convert to PIL image here). Try using an all-ndarray pipeline if possible.
+            if isinstance(out, np.ndarray):
+                print('WARNING: CONVERTING IS SLOWER')
+                out = Image.fromarray(out)
+        elif kind == 'ndarray' and not isinstance(out, np.ndarray):
+            if not isinstance(out, np.ndarray):
+                print('WARNING: CONVERTING IS SLOWER')
+                out = np.array(out)
+
+        return out
+
+    def reset_fullscreen_grab(self):
+        self._last_fullscreen_grab = self._grab()
+        
+    def _grab(self, bbox=None, relativeBbox=None):
 
         if bbox is None: bbox = self.getBbox()
         
@@ -135,16 +214,15 @@ class Window:
 
         if False:
             out =  grab_pyautogui_bbox(bbox)
-        elif True:
+        elif False:
             if not hasattr(self, 'grabber'): self.grabber = D3DGrabber()
             out = self.grabber(bbox)
+        elif True:
+            out = grab_screen_win32(bbox)
         else:
             out = ImageGrab.grab(bbox, all_screens=True)
             
-        if kind == 'PIL' and not isinstance(out, Image.Image):
-            # TODO: According to the README, d3dshot is even faster if you use numpy output (which we do, but then we convert to PIL image here). Try using an all-ndarray pipeline if possible.
-            out = Image.fromarray(out)
-        elif kind == 'ndarray' and not isinstance(out, np.ndarray):
+        if not isinstance(out, np.ndarray):
             out = np.array(out)
         return out
 
@@ -154,7 +232,7 @@ class Window:
             pydirectinput.keyDown(k)
             time.sleep(delay)
             pydirectinput.keyUp(k)
-            
+        
 
 class GtaWindow(Window):
 
@@ -180,8 +258,10 @@ class GtaWindow(Window):
         
         Window.__init__(self, gta_wid)
 
-        self.window_size = self.grab().size[:2]
+        self.window_size = self.grab(kind='numpy').shape[:2][::-1]
         logger.info('Window size: {}'.format(self.window_size))
+        umap = self.micromap
+        logger.info('Micro map size: {}'.format(umap.shape))
 
         # Make second number bigger if we tend to go into the right shoulder.
         self.car_origin = self.wscale(45, 47)

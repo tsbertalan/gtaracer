@@ -83,9 +83,10 @@ class IOController:
             
             def get_velocity(full_frame):
                 if self.network_executor.is_ready:
-                    vel = self.network_executor(full_frame)
-                    if vel is not None:
-                        self.velocity_prediction_history.append((time.time(), vel))
+                    t_vel = self.network_executor(full_frame)
+                    if t_vel is not None:
+                        t, vel = t_vel
+                        self.velocity_prediction_history.append((t, vel))
                         return vel
 
             self.get_velocity = get_velocity
@@ -416,6 +417,8 @@ class IOController:
 
     def step(self):
 
+        self.gameWindow.reset_fullscreen_grab()
+
         t = time.time()
         if hasattr(self, '_last_step_time'):
             dt = t - self._last_step_time
@@ -594,7 +597,7 @@ def main():
     parser = ArgumentParser()
     parser.add_argument('--throttle', type=float, default=None) # 0.01 for debug else None
     parser.add_argument('--minimum_throttle', type=float, default=None)
-    parser.add_argument('--show_plot', action='store_true', default=False)
+    parser.add_argument('--show_plot', action='store_true', default=True)
     parser.add_argument('--save_plot', action='store_true', default=False)
     parser.add_argument('--mode', type=str, default=DEFAULT_MODE)
     parser.add_argument('--error_kind', type=str, default=None)
