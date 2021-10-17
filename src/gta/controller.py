@@ -30,6 +30,7 @@ import gta.recording.vision
 import gta.gameInputs.gamepad
 import gta.train_velocity_predictor
 from gta.random_destinations import change_gps
+import gta.run_network_in_subprocess
 
 from PIL import Image
 import cv2
@@ -77,27 +78,15 @@ class IOController:
 
         self.predict_velocity = predict_velocity
         if predict_velocity:
+            self.network_executor = gta.run_network_in_subprocess.SubprocessNetworkExecutor(gta.default_configs.OFLOW_VEL_MODEL_SAVE_PATH)
             self.velocity_prediction_history = []
-            save_path = gta.default_configs.OFLOW_VEL_MODEL_SAVE_PATH
-            print('Loading from', save_path)
-            self.oflow_velocity_model = gta.train_velocity_predictor.\
-                VelocityPredictorFromOpticalFlow.load_from_checkpoint(save_path)
-
+            
             def get_velocity(full_frame):
-                full_frame = np.array(full_frame)
-                current_small_image = gta.train_velocity_predictor.shrink_img_for_oflow(full_frame)
-                if not hasattr(self, '_last_small_image'):
-                    vel = None
-                else:
-                    oflow = gta.train_velocity_predictor.convert_image_pair_to_optical_flow(
-                        self._last_small_image, current_small_image
-                    )
-                    oflow = gta.train_velocity_predictor.reshape_oflow_for_net(oflow)
-                    vel = self.oflow_velocity_model.predict_from_numpy(oflow)
-                    vel = float(vel)
-                self._last_small_image = current_small_image
-                self.velocity_prediction_history.append((time.time(), vel))
-                return vel
+                if self.network_executor.is_ready:
+                    vel = self.network_executor(full_frame)
+                    if vel is not None:
+                        self.velocity_prediction_history.append((time.time(), vel))
+                        return vel
 
             self.get_velocity = get_velocity
 
@@ -436,6 +425,9 @@ class IOController:
         if self.predict_velocity:
             vel = self.get_velocity(self.gameWindow.img)
             print('Network predicted velocity:', vel)
+
+        if hasattr(self, '_controller_dt'):
+            print('Controller latency:', self._controller_dt * 1000, 'ms')
        
         self._last_steering = steer = self.compute_control()
 
