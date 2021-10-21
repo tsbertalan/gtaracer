@@ -1,4 +1,4 @@
-from os.path import join, dirname, abspath, basename
+from os.path import join, dirname, abspath, basename, exists
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm.auto import tqdm    
@@ -39,18 +39,17 @@ def show_velocity_courses(base_dir=gta.default_configs.PROTOCOL_V2_DIR):
 
 def main(
     base_dir=gta.default_configs.PROTOCOL_V2_DIR, 
-    n_epochs=1024,  batch_size=300,
-    # LIMIT_OFLOWFILES=None,
-    START_OFLOWFILES=10, LIMIT_OFLOWFILES=5,
+    n_epochs=4000,  batch_size=400,
+    LIMIT_OFLOWFILES=None, START_OFLOWFILES=0,
+    # LIMIT_OFLOWFILES=8, START_OFLOWFILES=0,
     # n_epochs=256, LIMIT_OFLOWFILES=1, batch_size=128,
-    n_gpus=0, n_dataloader_workers=8,
+    n_gpus=1, n_dataloader_workers=8,
     reload_from_previous=True,
     ):
     model_save_dir = join(base_dir, 'models')
     
     oflow_data_paths = gta.train_velocity_predictor.list_existing_oflow_savefiles(base_dir)
 
-    input_arrays = []
     output_arrays = []
 
     aux_data_per_path = {}
@@ -64,7 +63,12 @@ def main(
 
     paths = oflow_data_paths[START_OFLOWFILES:]
     print('Trying to load', len(paths), 'oflow npz files.')
-    for path in paths:
+    from tempfile import mkdtemp
+    input_memmap_path = join(mkdtemp(), 'input_array.npy')
+    print('Memmap will be saved in', input_memmap_path)
+    input_mmap_initialized = False
+    
+    for path in tqdm(paths, unit='path', desc='Loading data into memmap'):
 
         data = np.load(path)
 
@@ -77,7 +81,17 @@ def main(
             continue
 
         session_lengths.append(inp.shape[0])
-        input_arrays.append(inp)
+        if not input_mmap_initialized:
+            input_mmap = np.memmap(input_memmap_path, dtype='float32', mode='w+', shape=inp.shape)
+            input_mmap_initialized = True
+        else:
+            input_mmap.flush()
+            new_shape = list(input_mmap.shape)
+            new_shape[0] += inp.shape[0]
+            input_mmap = np.memmap(input_memmap_path, dtype='float32', mode='r+', shape=tuple(new_shape))
+        input_mmap[-inp.shape[0]:] = inp
+        input_mmap.flush()
+
         output_arrays.append(outp)
         aux_data_per_path[path] = {}
         if 'times' in data:
@@ -85,20 +99,19 @@ def main(
         if 'vvecs' in data:
             aux_data_per_path[path]['vvecs'] = data['vvecs']
 
-        if len(input_arrays) >= LIMIT_OFLOWFILES:
+        if len(output_arrays) >= LIMIT_OFLOWFILES:
             break
         
 
-    print('Successfully loaded', len(input_arrays), 'oflow files.')
+    print('Successfully loaded', len(output_arrays), 'oflow files.')
 
-    input_array = np.concatenate(input_arrays, axis=0)
     output_array = np.concatenate(output_arrays, axis=0)
 
-    print('input_array.shape:', input_array.shape)
+    print('input_array.shape:', input_mmap.shape)
     print('output_array.shape:', output_array.shape)
 
     dataloaders, _unused_full_dataset = gta.neural.get_dataloaders_kwargs_from_arrays(
-        input_array, output_array, 
+        input_mmap, output_array, 
         num_workers=n_dataloader_workers, batch_size=batch_size,
     )
 
@@ -108,20 +121,27 @@ def main(
     print('batches_per_epoch maybe:', batches_per_epoch)
     print('Validating with', len(dataloaders['val_dataloaders'][0].dataset), 'samples.')
 
-    model = gta.train_velocity_predictor.VelocityPredictorFromOpticalFlow(
-        epochs_for_scheduler=n_epochs, 
-        batches_per_epoch_for_scheduler=batches_per_epoch,
-    )
 
+    reloaded = False
     save_path = gta.default_configs.OFLOW_VEL_MODEL_SAVE_PATH
     if reload_from_previous:
-        # Load the model.
-        print('Loading from', save_path)
-        reloaded = gta.train_velocity_predictor.VelocityPredictorFromOpticalFlow.load_from_checkpoint(save_path)
+        if not exists(save_path):
+            print('No previous model found at', save_path)
+        else:
+            # Load the model.
+            print('Loading from', save_path)
+            model = gta.train_velocity_predictor.VelocityPredictorFromOpticalFlow.load_from_checkpoint(save_path)
+            reloaded = True
 
+    if not reloaded:
+        print('Creating new model from scratch.')
+        model = gta.train_velocity_predictor.VelocityPredictorFromOpticalFlow(
+            epochs_for_scheduler=n_epochs, 
+            batches_per_epoch_for_scheduler=batches_per_epoch,
+        )
 
     # Make a minimal batch of predictions so that the parameters are initialized.
-    model.predict_from_numpy(input_array[[0]])
+    model.predict_from_numpy(input_mmap[[0]])
 
     loss_recorder = gta.neural.LossRecorder()
 
@@ -133,10 +153,10 @@ def main(
 
         def on_epoch_end(self, trainer, pl_module):
             if trainer.current_epoch % self.k == 0:
-                viz_fig, ax = show_status(model, input_array, output_array, session_lengths)
+                viz_fig, ax = show_status(model, input_mmap, output_array, session_lengths)
 
                 for save_path in [
-                    join(model_save_dir, 'vel_predictions-%05d_epochs.png' % trainer.current_epoch),
+                    join(model_save_dir, 'velvid', 'vel_predictions-%05d_epochs.png' % trainer.current_epoch),
                     join(HERE, 'vel_predictions.png'),
                 ]:
                     viz_fig.savefig(save_path)
@@ -144,7 +164,7 @@ def main(
                 loss_fig, loss_ax = self.loss_recorder.show(save_path=None)
                 for save_path in [
                     join(
-                        model_save_dir, 'loss-%05d_epochs.png' % trainer.current_epoch
+                        model_save_dir, 'lvid', 'loss-%05d_epochs.png' % trainer.current_epoch
                     ),
                     join(HERE, 'loss.png'),
                 ]:

@@ -30,12 +30,12 @@ class LossRecorder(pl.Callback):
         fig, ax = plt.subplots(1, 1)
         B = [b for (b, l) in self.losses]
         L = [l for (b, l) in self.losses]
-        ax.plot(B, L, label='Loss')
+        ax.plot(B, L, label='Loss', color='black', alpha=0.5)
 
         if len(self.val_losses) > 0:
             B = [b for (b, l) in self.val_losses]
             L = [l for (b, l) in self.val_losses]
-            ax.scatter(B, L, label='Validation Loss')
+            ax.scatter(B, L, label='Validation Loss', color='blue', zorder=99, alpha=.8)
 
         ax.legend()
         ax.set_xlabel('Number of training batches seen')
@@ -71,7 +71,7 @@ class PbarCallback(pl.Callback):
 
 
 def get_dataloaders_kwargs_from_arrays(input_array, output_array, batch_size=300, train_frac=.9, 
-    input_dtype='float32',
+    input_dtype_assumed='float32',
     output_dtype='float32',
     num_workers=8,
     ):
@@ -127,7 +127,7 @@ def get_dataloaders_kwargs_from_arrays(input_array, output_array, batch_size=300
     #     **test_dataloader_kwargs
 
     full_dataset = torch.utils.data.TensorDataset(
-        torch.from_numpy(input_array.astype(input_dtype)),
+        torch.from_numpy(input_array),
         torch.from_numpy(output_array.astype(output_dtype))
     )
 

@@ -12,6 +12,9 @@ from torch import nn
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 import pytorch_lightning as pl
+import sys, os
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.join(HERE, '..'))
 from gta.recording_videos import ImageRecording, TelemetryRecording
 
 from os.path import join, dirname, basename
@@ -362,6 +365,9 @@ class VelocityPredictorFromOpticalFlow(pl.LightningModule):
         flow_channels = 2
         super().__init__()
 
+        self.start_lr = 5e-4
+        self.max_lr = 6e-3
+
         self.epochs_for_scheduler = epochs_for_scheduler
         self.batches_per_epoch_for_scheduler = batches_per_epoch_for_scheduler
         in_channels = flow_channels
@@ -423,10 +429,12 @@ class VelocityPredictorFromOpticalFlow(pl.LightningModule):
             },
         }
 
-    def configure_optimizers(self, lr=1e-4):
+    def configure_optimizers(self, lr=None):
+        if lr is None:
+            lr = self.start_lr
         optimizer = torch.optim.Adam(self.parameters(), lr=lr)
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
-            optimizer, max_lr=5e-3, 
+            optimizer, max_lr=self.max_lr, 
             epochs=self.epochs_for_scheduler, steps_per_epoch=self.batches_per_epoch_for_scheduler,
             verbose=False,
         )
