@@ -22,7 +22,6 @@ def show_velocity_courses(base_dir=gta.default_configs.PROTOCOL_V2_DIR):
         data = np.load(path)
 
         try:
-            inp = data['flow_data']
             outp = data['vel_data']
 
         except EOFError:
@@ -39,9 +38,9 @@ def show_velocity_courses(base_dir=gta.default_configs.PROTOCOL_V2_DIR):
 
 def main(
     base_dir=gta.default_configs.PROTOCOL_V2_DIR, 
-    n_epochs=4000,  batch_size=400,
+    n_epochs=4000,  batch_size=200,
     LIMIT_OFLOWFILES=None, START_OFLOWFILES=0,
-    # LIMIT_OFLOWFILES=8, START_OFLOWFILES=0,
+    # LIMIT_OFLOWFILES=1, START_OFLOWFILES=0,
     # n_epochs=256, LIMIT_OFLOWFILES=1, batch_size=128,
     n_gpus=1, n_dataloader_workers=8,
     reload_from_previous=True,
@@ -174,13 +173,13 @@ def main(
                 return viz_fig, loss_fig
 
     trainer = pl.Trainer(
-        max_epochs=n_epochs, min_epochs=n_epochs, weights_save_path=model_save_dir, 
+        max_epochs=n_epochs, min_epochs=int(np.math.ceil(n_epochs*.025)), weights_save_path=model_save_dir, 
         progress_bar_refresh_rate=0,
         gpus=n_gpus,
         callbacks=[
             loss_recorder,
             gta.neural.PbarCallback(n_epochs),
-            # pl.callbacks.EarlyStopping(patience=4, monitor='loss'),  # Needs a validation set.
+            # pl.callbacks.EarlyStopping(patience=120, monitor='val_loss'),  # Needs a validation set.
             EveryKEpochsPlot(1, loss_recorder),
             pl.callbacks.LearningRateMonitor(logging_interval='step'),
         ],

@@ -67,10 +67,10 @@ class SubprocessNetworkExecutor:
             res = self.parent_conn.recv()
             return res
 
-    def __del__(self):
+    def shutdown(self):
         # First, send a None to the child process to tell it to stop.
         self.parent_conn.send(None)
-        
+
         # Then, wait for it to finish.
         self.process.join()
         

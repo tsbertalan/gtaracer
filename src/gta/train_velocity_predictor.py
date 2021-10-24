@@ -70,51 +70,6 @@ def list_existing_oflow_savefiles(base_dir=gta.default_configs.PROTOCOL_V2_DIR):
     return glob(glob_pattern)
 
 
-class VelocityPredictor(pl.LightningModule):
-    def __init__(self, window_size=4, color_channels=3):
-        super().__init__()
-
-        in_channels = color_channels * window_size
-
-        self.layers = nn.Sequential(
-
-            nn.Conv2d(in_channels, 4, 3, 1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-
-            nn.Conv2d(4, 6, 3, 1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-
-            nn.Conv2d(6, 4, 3, 1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-
-            nn.Flatten(),
-
-            nn.LazyLinear(4),
-            nn.ReLU(),
-            
-            nn.Linear(4, 2),
-            nn.ReLU(),
-
-            nn.Linear(2, 1),
-
-        )
-
-    def forward(self, images_window):
-        return self.layers(images_window)
-
-    def training_step(self, batch, batch_idx):
-        images_window, velocities = batch[0]
-        predictions = self(images_window)
-        loss = F.mse_loss(predictions, velocities)
-        return {'loss': loss}
-
-    def configure_optimizers(self, lr=1e-4):
-        return torch.optim.Adam(self.parameters(), lr=lr)
-
-
 def shrink_img_for_oflow(img):
     new_shape = 400, 300
     return cv2.resize(img, new_shape)
@@ -132,205 +87,9 @@ def reshape_oflow_for_net(data):
     return data
         
 
-def get_windowed_data():
-    # Create windowed data
-    data_dir = gta.default_configs.VELOCITY_DATA_DIR
-    from glob import glob
-
-    all_data = {
-            'train_windows': [], 
-            'window_velocities': [],
-            'window_times': [],
-            'npz_data': [],
-        }
-
-    query = join(data_dir, '*.reduced.npz')
-    paths = glob(query)
-    print('Query', query, 'yielded', len(paths), 'files.')
-    for data_path in tqdm(paths, unit='file', desc='load data'):
-
-        data = np.load(data_path)
-
-        window_size = 4
-
-        target_img_height = 32
-
-        n, h, w, c = data['images'].shape
-        aspect_ratio = w / h
-        target_img_width = int(target_img_height * aspect_ratio)
-        
-        scaled_images = np.stack([
-            skimage.transform.resize(img, (target_img_height, target_img_width))
-            for img in data['images']
-        ]).astype('single')
-
-        # Change data from n, h, w, c to n, c, h, w
-        scaled_images = np.transpose(scaled_images, (0, 3, 1, 2))
-
-        velocities = data['v']
-
-        overlapping_windows = [
-            np.concatenate(scaled_images[i:i+window_size], axis=0)
-            for i in range(0, len(scaled_images) - window_size + 1)
-        ]
-        window_velocities = velocities[window_size-1:].astype('single').reshape((-1, 1))
-
-        train_windows = np.stack(overlapping_windows)
-
-        all_data['train_windows'].append(train_windows)
-        all_data['window_velocities'].append(window_velocities)
-        all_data['npz_data'].append(data)
-        all_data['window_times'].append(data['t'][window_size-1:].reshape((-1, 1)))
-        assert len(all_data['train_windows'][-1]) == len(all_data['window_velocities'][-1])
-        assert len(all_data['train_windows'][-1]) == len(all_data['window_times'][-1])
-        
-    return all_data
-
-
 def get_model_save_dir():
     return join(HERE, 'models')
 
-
-def train(batch_size=32):
-    pl.seed_everything(42)
-
-    model_save_dir = get_model_save_dir()    
-
-    from sys import path
-    path.append(join(HERE, '..', 'src'))
-    from gta.utils import mkdir_p
-    mkdir_p(model_save_dir)
-
-    data = get_windowed_data()
-    train_windows = np.concatenate(data['train_windows'], axis=0)
-    window_velocities = np.concatenate(data['window_velocities'], axis=0)
-
-    window_size = train_windows.shape[1] // 3
-    print(window_size)
-
-
-    print('Predict data with shape', window_velocities.shape, 'from data with shape', train_windows.shape, '.')
-
-    model = VelocityPredictor(window_size=window_size)
-
-    # Create PyTorch datasets from the data.
-    full_dataset = torch.utils.data.TensorDataset(torch.from_numpy(train_windows), torch.from_numpy(window_velocities))
-    
-
-    # Create a DataLoader for the training dataset.
-    train_loader = DataLoader(full_dataset, batch_size=batch_size, shuffle=True)
-
-
-    # window_loader = DataLoader(train_windows, batch_size=batch_size, shuffle=True)
-    # velocity_loader = DataLoader(window_velocities, batch_size=batch_size, shuffle=True)
-
-    class LossRecorder(pl.Callback):
-
-        def __init__(self):
-            self.losses = []
-
-        def on_before_backward(self, trainer, pl_module, loss):
-            # # Do garbage collection.
-            # import gc
-            # gc.collect()
-            self.losses.append(float(loss))
-
-    class PbarCallback(pl.Callback):
-
-        def __init__(self, n_epochs):
-            self.pbar = tqdm(total=n_epochs, unit='epoch', desc='Training')
-
-        def on_epoch_end(self, trainer, pl_module):
-            self.pbar.update(1)
-
-        def on_train_end(self, trainer, pl_module):
-            self.pbar.close()
-
-    loss_recorder = LossRecorder()
-
-    n_epochs = 10240
-    trainer = pl.Trainer(
-        max_epochs=n_epochs, min_epochs=n_epochs, weights_save_path=model_save_dir, 
-        progress_bar_refresh_rate=0,
-        callbacks=[
-            loss_recorder,
-            PbarCallback(n_epochs),
-            # pl.callbacks.EarlyStopping(patience=4, monitor='loss'),  # Needs a validation set.
-        ]
-    )
-    trainer.fit(model, train_dataloaders=[train_loader])
-
-    fig, ax = plt.subplots(1, 1)
-    l = loss_recorder.losses
-    ax.plot(l, label='history loss')
-    ax.legend()
-    ax.set_xlabel('batch')
-    ax.set_ylabel('loss')
-    ax.set_yscale('log')
-    fig.savefig(join(model_save_dir, 'loss.png'))
-
-
-def reload():
-    model_save_dir = get_model_save_dir()    
-
-    
-    data = get_windowed_data()
-    train_windows = np.concatenate(data['train_windows'], axis=0)
-    window_velocities = np.concatenate(data['window_velocities'], axis=0)
-    window_times = np.concatenate([
-        a - a.min() for a in data['window_times']
-    ], axis=0)
-    
-    window_size = train_windows.shape[1] // 3
-    print(window_size)
-
-    model = VelocityPredictor(window_size=window_size)
-    from subprocess import check_output
-    print('Looking for model in', model_save_dir, '...')
-    checkpoints = check_output(['find', model_save_dir, '-iname', '*.ckpt']).decode('utf-8').split('\n')
-    checkpoints = list(sorted(checkpoints))
-    print('Among\n    ', '\n    '.join(checkpoints))
-    ckpt = checkpoints[-1]
-    print('Selected checkpoint', ckpt)
-    loaded = torch.load(ckpt)
-
-    model.load_state_dict(loaded['state_dict'])
-
-    predictions = model(torch.from_numpy(train_windows)).detach().numpy()
-
-
-    for i_pred in np.linspace(0, len(train_windows)-1, 10).astype('int'):
-        first_window = train_windows[i_pred]
-        
-        fig, axes = plt.subplots(ncols=window_size, figsize=(window_size * 3, 3))
-        for i in range(window_size):
-            ax = axes[i]
-            im = first_window[i*3:(i+1)*3]
-            # Convert back to h, w, c
-            im = np.transpose(im, (1, 2, 0))
-            ax.imshow(im)
-            ax.set_title('$t=%.2f$' % window_times[i])
-            ax.set_xticks([])
-            ax.set_yticks([])
-        fig.suptitle('datum {i}: predicted velocity {pred:.2f}, vs actual {actual:.2f}'.format(
-            i=i_pred,
-            pred=float(predictions[i_pred]*3600),
-            actual=float(window_velocities[i_pred]*3600),
-        ))
-        fig.tight_layout()
-        fig.savefig(join(model_save_dir, 'prediction_%02d.png' % i_pred))
-
-
-
-    fig, ax = plt.subplots()
-    ax.plot(window_velocities, label='true')
-    ax.plot(predictions, label='predicted')
-    ax.legend()
-    ax.set_xlabel('Window Index')
-    ax.set_ylabel('Velocity [mi/h]')
-    fig.tight_layout()
-    fig.savefig(ckpt[:-5] + '.png')
-    
 
 def show_data():
     data = get_windowed_data()
@@ -365,8 +124,8 @@ class VelocityPredictorFromOpticalFlow(pl.LightningModule):
         flow_channels = 2
         super().__init__()
 
-        self.start_lr = 5e-4
-        self.max_lr = 6e-3
+        self.start_lr = 1e-3
+        self.max_lr = 1e-2
 
         self.epochs_for_scheduler = epochs_for_scheduler
         self.batches_per_epoch_for_scheduler = batches_per_epoch_for_scheduler
@@ -374,27 +133,27 @@ class VelocityPredictorFromOpticalFlow(pl.LightningModule):
 
         self.layers = nn.Sequential(
 
-            nn.Conv2d(in_channels, 4, 3, 1),
+            nn.Conv2d(in_channels, 8, 3, 1),
             nn.ReLU(),
             nn.MaxPool2d(4, 4),
 
-            nn.Conv2d(4, 6, 3, 1),
+            nn.Conv2d(8, 16, 3, 1),
             nn.ReLU(),
             nn.MaxPool2d(2, 2),
 
-            nn.Conv2d(6, 4, 3, 1),
+            nn.Conv2d(16, 12, 3, 1),
             nn.ReLU(),
             nn.MaxPool2d(2, 2),
 
             nn.Flatten(),
 
-            nn.LazyLinear(4),
+            nn.LazyLinear(24),
             nn.ReLU(),
             
-            nn.Linear(4, 2),
+            nn.Linear(24, 8),
             nn.ReLU(),
 
-            nn.Linear(2, 1),
+            nn.Linear(8, 1),
 
         )
 
@@ -433,13 +192,14 @@ class VelocityPredictorFromOpticalFlow(pl.LightningModule):
         if lr is None:
             lr = self.start_lr
         optimizer = torch.optim.Adam(self.parameters(), lr=lr)
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(
-            optimizer, max_lr=self.max_lr, 
-            epochs=self.epochs_for_scheduler, steps_per_epoch=self.batches_per_epoch_for_scheduler,
-            verbose=False,
-        )
-        return [optimizer], [scheduler]
-
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=10, verbose=True)
+        return {
+            'optimizer': optimizer,
+            'lr_scheduler': {
+                'scheduler': scheduler,
+                'monitor': 'val_loss',
+            }
+        }
 
 import scipy.spatial.transform
 def get_local_to_global_rot(st):
