@@ -24,7 +24,9 @@ logger.setLevel(logging.INFO)
 
 from sys import path
 from os.path import join, expanduser
+# We need to edit the path this way because vscode is an abject failure at powershell integration.
 path.append(join(expanduser('~'), 'Dropbox', 'Projects', 'GTARacer', 'src'))
+path.append(join(expanduser('~'), 'Dropbox', 'Delayed Projects', 'GTARacer', 'src'))
 
 import gta.recording.vision
 import gta.gameInputs.gamepad
@@ -42,12 +44,16 @@ class PointsError(ValueError):
 
 class IOController:
 
-    def __init__(self, throttle=None, minimum_throttle=None, steer_limit=0.5, kp=.1, ki=0.02, kd=0.05, 
-        pretuned='car', filters_present='carmission', error_kind='cte', draw_on_basemap=False,
-        do_perspective_transform=True, dry_run=False, use_minimap=False,
+    def __init__(self, 
+        throttle=None, minimum_throttle=None, steer_limit=0.5, 
+        kp=.1, ki=0.02, kd=0.05, 
+        pretuned='car', filters_present='carmission', error_kind='cte', 
+        draw_on_basemap=False,
+        do_perspective_transform=None, dry_run=False, use_minimap=False,
         throttle_disabled=False,
         curvature_reactive_throttle=True,
         predict_velocity=False,
+        game='gta',
         ):
         self.error_kind = error_kind
         if error_kind == 'cte':
@@ -56,7 +62,12 @@ class IOController:
             self._too_few_points_minpoints = 10
         logger.info('Error kind: {}'.format(error_kind))
         steer_limit = abs(steer_limit)
-        self.gameWindow = gta.recording.vision.GtaWindow()
+        self.game = game
+        if game == 'gta':
+            self.gameWindow = gta.recording.vision.GtaWindow()
+        else:
+            assert game == 'cyberpunk2077'
+            self.gameWindow = gta.recording.vision.CyberpunkWindow()
         self.draw_on_basemap = draw_on_basemap
         self._too_few_points_maxiter = TOO_FEW_POINTS_MAXITER_DEFAULT
         self.n_randomizations = 0
@@ -64,12 +75,12 @@ class IOController:
         self.min_randomize_interval = 10.
         self._max_randomizations = 5
 
-        self.do_perspective_transform = do_perspective_transform
+        self.do_perspective_transform = do_perspective_transform if do_perspective_transform is not None else (game == 'gta')
 
         self.dry_run = dry_run
         self.use_minimap = use_minimap
 
-        self.filter_display_level = 128
+        self.filter_display_level = 260
         self.tentacle_color = 128, 255, 0  # r, g, b
        
         self.angle_weight = 4
@@ -117,7 +128,7 @@ class IOController:
         if filters_present is not None:
             filter_options = dict(
                 car=['magenta_line'],
-                mission=['yellow_line', 'green_line', 'sky_line'],
+                mission=['yellow_line', 'green_line', 'sky_line', 'cpunk_yellow_dots'],
                 carmission=['magenta_line', 'yellow_line', 'green_line', 'sky_line'],
                 race=['all'],
                 slowcarrace=['all'],
@@ -128,6 +139,8 @@ class IOController:
                 sailboat=['purple_cross', 'race_dots'],
             )
             self.filters_present = set()
+            if 'carmission' in filters_present:
+                self.filters_present.update(filter_options['carmission'])
             if 'car' in filters_present:
                 self.filters_present.update(filter_options['car'])
             if 'mission' in filters_present:
@@ -153,7 +166,8 @@ class IOController:
         self.pid.proportional_on_measurement = False
         self.steer_limit = steer_limit
         self.pid.output_limits = (-steer_limit, steer_limit)
-        self.gpad = gta.gameInputs.gamepad.Gamepad()
+        self.gpad = gta.gameInputs.gamepad.Gamepad(game=game)
+        self.gpad(accel=0, decel=0, steer=0)
 
         self.throttle_nominal = DEFAULT_CAR_THROTTLE if throttle is None else throttle
         if minimum_throttle is None:
@@ -212,7 +226,7 @@ class IOController:
             # Do some simple outlier rejection.
             xm, ym = np.mean(points, axis=0)
             distance_from_mean = np.linalg.norm(points - np.array([[xm, ym]]), axis=1)
-            distance_threshold = self.gameWindow.wscale(14., 0)[0]
+            distance_threshold = self.gameWindow.wscale(14. / 768., 0, dtype=float)[0]
             near_mean = distance_from_mean < distance_threshold
 
             x1, y1 = np.mean(points[near_mean], axis=0)
@@ -294,9 +308,10 @@ class IOController:
             self.gameWindow.car_origin_minimap
         )
         tm, basemap = self.gameWindow.get_track_mask(
-            basemap_kind='minimap' if minimap else 'micromap', do_erode=False, 
+            basemap_kind='minimap' if minimap else 'micromap',
             filters_present=self.filters_present,
             do_perspective_transform=self.do_perspective_transform,
+            do_erode=False,#self.game == 'gta',
         )
         tm = np.array(tm)
         rows, cols = tm.shape[:2]
@@ -325,9 +340,17 @@ class IOController:
             rows, cols = display.squeeze().shape
             display = np.dstack([display, display, display])
 
+        assert origin[0] < display.shape[0] and origin[1] < display.shape[1]
+
+        if False:
+            fig, ax = plt.subplots()
+            ax.imshow(basemap)
+            ax.scatter(origin[1], origin[0], marker='X', color='magenta', s=100)
+            plt.show()
+
         if 'poly' in locals():
 
-            # Take y values from the origin up to the highest point.
+            # Take y values from the highest point (y=0) down to the origin(y>0)
             Y = np.arange(origin[0]).astype(int)
 
             # Evaluate the corresponding x values.
@@ -608,6 +631,9 @@ def main():
     parser.add_argument('--dont_randomize_dest_on_stopiteration', action='store_true', default=True)
     parser.add_argument('--throttle_disabled', action='store_true', default=DEFAULT_DISABLE_THROTTLE)
     parser.add_argument('--randomize_dest_every_n_seconds', type=float, default=None)
+
+    parser.add_argument('--game', type=str, default='cyberpunk2077')
+
     args = parser.parse_args()
     logger.info('Got args: {}'.format(args))
 
@@ -620,7 +646,7 @@ def main():
     race = args.mode.lower() == 'race'
     boatrace = boat and race
     if args.throttle is None:
-        args.throttle = (
+        args.throttle = 0.5 * (
             DEFAULT_TRUCK_THROTTLE if truck
             else DEFAULT_CAR_THROTTLE if (car or race) 
             else DEFAULT_BOAT_THROTTLE if boat 
@@ -649,12 +675,14 @@ def main():
         error_kind=args.error_kind, 
         pretuned=args.pid_tuning,
         filters_present=filters_present,
-        do_perspective_transform=not boat,
+        do_perspective_transform=((args.game == 'gta') and not boat),
         steer_limit=args.steer_limit,
         minimum_throttle=args.minimum_throttle,
         dry_run=DEFAULT_DRY_RUN,
         throttle_disabled=args.throttle_disabled,
-        predict_velocity=True,
+        predict_velocity=False,
+        game=args.game,
+        use_minimap=not (args.game == 'gta'),
     )
 
     last_gps_randomization_time = time.time()
@@ -703,6 +731,7 @@ def main():
                 from traceback import format_exc
                 tb = format_exc()
                 logger.warning('Stopping: %s' % tb)
+                raise e
                 break
 
 

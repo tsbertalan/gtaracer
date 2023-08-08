@@ -3,7 +3,10 @@ ipywidgets
 tqdm
 numpy
 matplotlib
-tensorflow-gpu
+# tensorflow-gpu
 pyglet
 scipy
-sklearn
+scikit-learn
+simple-pid
+scikit-image
+lightning

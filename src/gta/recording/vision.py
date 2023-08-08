@@ -28,6 +28,7 @@ import win32gui
 import win32com
 import win32com.client
 import win32con
+from win32process import GetWindowThreadProcessId
 import numpy as np
 
 from gta.recording import BaseRecorder, BaseTask
@@ -35,7 +36,6 @@ import cv2
 from PIL import ImageGrab, Image
 
 import pydirectinput
-
 
 
 class WXGrabber:
@@ -66,7 +66,6 @@ class WXGrabber:
         arr = np.frombuffer(buf, dtype='uint8')
         arr = arr.reshape([height, width, 3])
         return Image.fromarray(arr)
-
 
 
 def grab_pyautogui(region=None):
@@ -236,50 +235,107 @@ class Window:
 
 class GtaWindow(Window):
 
-    def __init__(self):
+    def __init__(self, 
+                 window_txt='Grand Theft Auto V', 
+                 ignore_strings=('REDEngineErrorReporter', 'Program Files'),
+                 # Relative bbox for minimap and micromap
+                 #  (added to left, top, right, bot to get indices top:bot, left:right)
+                 minimap_wscale=(35/768., 588/1024., -758/768., -38/1024.),
+                 micromap_wscale=(100/768., 640/1024., -820/768., -52/1024.),
+                 do_resize_bboxes_interactive=False,
+                 ):
         wids = []
+        self.window_txt = window_txt
         def saveWid(wid, *unused_args):
             wids.append(wid)
         win32gui.EnumWindows(saveWid, None)
 
-        gta_wids = [
-            wid for wid in wids
-            if 'Grand Theft Auto V' in win32gui.GetWindowText(wid)
+        win_txts = [
+            win32gui.GetWindowText(wid)
+            for wid in wids
         ]
+
+        gta_wids = [
+            wid for (wid, txt) in zip(wids, win_txts)
+            if window_txt in txt and not any(ignore_string in txt for ignore_string in ignore_strings)
+        ]
+        if len(gta_wids) == 0:
+            raise ValueError(
+                'No %s window found. Win txts seen:\n  ' % window_txt
+                +
+                '\n  '.join(list(sorted(set(win_txts))))
+            )    
+        # gta_txts = [
+        #     txt for (wid, txt) in zip(wids, win_txts)
+        #     if window_txt in txt
+        # ]
         gta_wid = gta_wids[-1]
         if len(gta_wids) > 1:
             msg = []
-            msg.append('Multiple GTA windows found:')
+            msg.append('Multiple %s windows found:' % window_txt)
             for gta_wid_ in gta_wids:
-                msg.append('  {}'.format(win32gui.GetWindowText(gta_wid_)))
+                pid_info = GetWindowThreadProcessId(gta_wid_)
+                thread_id, process_id = pid_info[:2]
+
+
+                wintxt = win32gui.GetWindowText(gta_wid_)
+                msg.append(f'  wid={gta_wid_}, thread_id={thread_id}, process_id={process_id}'
+                         +f'\n    wintxt={wintxt}')
             msg.append('Using WID: {}'.format(gta_wid))
             msg.append('If this leads to errors, close or rename the other windows and try again.')
             logger.warning('\n'.join(msg))
         
         Window.__init__(self, gta_wid)
 
-        self.window_size = self.grab(kind='numpy').shape[:2][::-1]
+        # width, height
+        self.window_size = self.grab(kind='ndarray').shape[:2][::-1]
+
+        self.minimap_geom = self.get_geom_from_relative_bbox(relativeBbox=self.wscale(*minimap_wscale, dtype=int))
+        self.micromap_geom = self.get_geom_from_relative_bbox(relativeBbox=self.wscale(*micromap_wscale, dtype=int))
+
         logger.info('Window size: {}'.format(self.window_size))
+        # logger.info('ignored changed full geometry:  %s' % (self.vis_bboxes(),))
+        
+        mmap = self.minimap
+        logger.info('Minimap size: {}'.format(mmap.shape))
+        if do_resize_bboxes_interactive:
+            geom = self.vis_bboxes(geom=self.minimap_geom, win_title='Minimap')
+            assert isinstance(geom, str)
+            self.minimap_geom = geom
+            relbox = self.get_relative_bbox_from_geom(geom)
+            wrelbox = self.get_wscale_relative_bbox(relbox)
+            wrelbox_fourdigits = '(%.4f, %.4f, %.4f, %.4f)' % wrelbox
+            logger.info(f'minimap changed geometry: {geom} (wrelbox={wrelbox_fourdigits})')
+
         umap = self.micromap
         logger.info('Micro map size: {}'.format(umap.shape))
+        if do_resize_bboxes_interactive:
+            geom = self.vis_bboxes(geom=self.micromap_geom, win_title='Micromap')
+            assert isinstance(geom, str)
+            self.micromap_geom = geom
+            relbox = self.get_relative_bbox_from_geom(geom)
+            wrelbox = self.get_wscale_relative_bbox(relbox)
+            wrelbox_fourdigits = '(%.4f, %.4f, %.4f, %.4f)' % wrelbox
+            logger.info(f'micromap changed geometry: {geom} (wrelbox={wrelbox_fourdigits})')
 
         # Make second number bigger if we tend to go into the right shoulder.
-        self.car_origin = self.wscale(45, 47)
-        self.car_origin_micromap_perspectiveTransformed = self.wscale(25, 17.5)
-        self.car_origin_minimap = self.wscale(100, 110)
-        self.car_origin_minimap_perspectivetransformed = self.wscale(100, 60)  # TODO: Retune these values.
+        self.car_origin = self.wscale(45/768., 47/1024.)
+        self.car_origin_micromap_perspectiveTransformed = self.wscale(25/768., 17.5/1024.)
+        self.car_origin_minimap = self.wscale(0.08, 0.1)
+        self.car_origin_minimap_perspectivetransformed = self.wscale(100/768., 60/1024.)  # TODO: Retune these values.
         self.last_cycle_time = time.time()
 
-    def wscale(self, a, b, c=None, d=None):
-        w1 = float(self.window_size[1]) / 768.
-        w2 = float(self.window_size[0]) / 1024.
+    def wscale(self, h1, v1, h2=None, v2=None, dtype=float):
+        # TODO: Most hardcoded uses of this are in the wrong order and will need to be recalibrated.
+        width  = float(self.window_size[0])
+        height = float(self.window_size[1])
         out = [
-            type(a)(w1 * a), type(b)(w2 * b)
+            dtype(width * h1), dtype(height * v1)
         ]
 
-        if c is not None and d is not None:
+        if h2 is not None and v2 is not None:
             out.extend([
-                type(c)(w1 * c), type(d)(w2 * d)
+                dtype(width * h2), dtype(height * v2)
             ])
 
         return tuple(out)
@@ -329,11 +385,11 @@ class GtaWindow(Window):
 
     @property
     def minimap(self):
-        return self.grab(relativeBbox=self.wscale(35, 588, -758, -38))
+        return self.grab(relativeBbox=self.minimap_relbox)
 
     @property
     def micromap(self):
-        return self.grab(relativeBbox=self.wscale(100, 640, -820, -52))
+        return self.grab(relativeBbox=self.micromap_relbox)
 
     @property
     def track_mask(self):
@@ -378,7 +434,7 @@ class GtaWindow(Window):
         OR = lambda *args: reduce(np.logical_or, args)
 
 
-        def RGB(r, g, b, radius=5):
+        def RGB(r, g, b, radius=8):
             lower = np.array([r-5, g-5, b-5])
             upper = np.array([r+5, g+5, b+5])
             return cv2.inRange(basemap, lower, upper)
@@ -386,6 +442,7 @@ class GtaWindow(Window):
         filters = dict(
             magenta_line=(168, 84, 243),
             yellow_line=(241, 203, 88),
+            cpunk_yellow_dots=(255, 239, 73),
             green_line=(121, 206, 121),
             sky_line=(101, 185, 230),
             race_dots=(240, 200, 80),
@@ -412,9 +469,114 @@ class GtaWindow(Window):
         if do_erode:
             out = cv2.erode(out, np.ones((3, 3)))
 
-
-
         return out.astype('bool'), basemap
+
+    def get_geom_from_relative_bbox(self, relativeBbox=None):
+        x, y, dx, dy = self.getBbox()
+        if relativeBbox is not None:
+            x2 = x + dx
+            y2 = y + dy
+            x, y, x2, y2 = np.array([x, y, x2, y2]) + np.array(relativeBbox)
+            dx = x2 - x
+            dy = y2 - y
+        return f'{dx}x{dy}+{x}+{y}'
+    
+    def get_relative_bbox_from_geom(self, geom):
+        # Location and size of the game window in screen coordinates:
+        x_game, y_game, dx_game, dy_game = self.getBbox()
+        x2_game = x_game + dx_game
+        y2_game = y_game + dy_game
+
+        # Screen coordinates of the geom:
+        dx_geom = int(geom.split('x')[0])
+        dy_geom = int(geom.split('x')[1].split('+')[0])
+        x_geom = int(geom.split('+')[1])
+        y_geom = int(geom.split('+')[2])
+        x2_geom = x_geom + dx_geom
+        y2_geom = y_geom + dy_geom
+        
+        # geom relative to game
+        x_rel = x_geom - x_game
+        y_rel = y_geom - y_game
+        x2_rel = x2_geom - x2_game
+        y2_rel = y2_geom - y2_game
+
+        return x_rel, y_rel, x2_rel, y2_rel
+    
+    def get_wscale_relative_bbox(self, relative_bbox):
+        dx1, dy1, dx2, dy2 = relative_bbox
+        width, height = self.window_size
+        width = float(width)
+        height = float(height)
+        return dx1/width, dy1/height, dx2/width, dy2/height
+
+    @property
+    def minimap_relbox(self):
+        return self.get_relative_bbox_from_geom(self.minimap_geom)
+    
+    @property
+    def micromap_relbox(self):
+        return self.get_relative_bbox_from_geom(self.micromap_geom)
+
+    def vis_bboxes(self, geom=None, win_title=None):
+        # Draw a transarent rectangle on the screen
+        # https://stackoverflow.com/questions/58759482/creating-a-transparent-gui-overlay-on-top-of-a-full-screen-game-in-python
+        # use https://github.com/wxWidgets/Phoenix/blob/master/demo/Overlay.py
+        # in combination with the wxNativeWindow. 
+
+        # Or use tkinter.
+        from tkinter import Tk, Label
+        # root = Tk()
+        # root.attributes('-alpha', 0.3)
+        # root.mainloop()
+        
+        # Make a tkinter window the same size as the game window.
+        if win_title is None:
+            win_title = self.window_txt
+        root = Tk()
+        root.title(win_title)
+        root.attributes('-alpha', 0.5)
+        if geom is None:
+            geom = self.get_geom_from_relative_bbox()
+        root.geometry(geom)
+
+        # Put "esc to exit" in the middle of the window. Use a big font size.
+        label = Label(root, text='Esc to exit', font=('Arial', 100))
+        label.pack()
+
+        # Esc to exit.
+        def esc(event):
+            root.destroy()
+        root.bind('<Escape>', esc)
+
+        # Before the window is destroyed, get its new geometry so we can return that.
+        the_geom = []
+        def on_closing():
+            the_geom.append(root.geometry())
+
+        # This should fire when the window is destroyed for any reason.
+        root.bind('<Destroy>', lambda event: on_closing())
+
+        
+        root.mainloop()
+
+        # Return the new geometry.
+        return the_geom[0]
+
+
+class CyberpunkWindow(GtaWindow):
+
+    def __init__(self, *a, **kw):
+        for k, v in dict(
+            window_txt="Cyberpunk 2077 (C) 2020 by CD Projekt RED",
+            # Relative bbox for minimap and micromap
+            #  (added to     left,  top, right,   bot to get indices top:bot, left:right)
+            minimap_wscale =(0.8516, 0.0447, -0.0394, -0.7813),
+            micromap_wscale=(0.8806, 0.1223, -0.0714, -0.7954),
+            do_resize_bboxes_interactive=False,
+        ).items():
+            kw.setdefault(k, v)
+        super().__init__(*a, **kw)
 
 
 class VisionTask(BaseTask):

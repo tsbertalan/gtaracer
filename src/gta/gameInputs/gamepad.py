@@ -86,7 +86,7 @@ class Button:
 
 class Gamepad:
 
-    def __init__(self):
+    def __init__(self, game='gta'):
         self.vj = vjoy.vJoy()
         self.vj.open()
         self.steering_dead_zone = 0.0
@@ -99,9 +99,16 @@ class Gamepad:
         #     and
         #     Right Stick X set to "HSlider1" (requires usin the script axis_recording.py, I think).
 
-        using_x360ce = True
-        if using_x360ce:
+        gta = game == 'gta'
+        #                steer      decel      accel      walk       walkturn
+        if gta:
+            # right trigger is accel; left trigger is brake
             axis_codes = 'wAxisX', 'wAxisY', 'wAxisZ', 'wAxisXRot', 'wSlider',
+        else:
+            assert game == 'cyberpunk2077'
+            # Cyberpunk 2077
+            # left trigger is accel; right trigger is brake
+            axis_codes = 'wAxisX', 'wAxisZ', 'wAxisZRot', 'wAxisXRot', 'wSlider',
         
         self._axes = [
             Axis(axis_codes[0], neutral=None, nominal_range=(-1, 1), purpose='steer', common_axis_name='Left Stick X',  input_clamp=[-1, 1], deadzone=self.steering_dead_zone),
@@ -172,17 +179,16 @@ if __name__ == '__main__':
 
 
     for _ in range(100):
-        # gp(accel=0, decel=0, steer=0)
-        # gp(steer=1, decel=0, accel=1)
+        gp(accel=0, decel=0.3, steer=1)
         # gp()
         sleep(.01)
 
-    # gp(0, 0, 0)
+    gp(0, 0, 0)
 
     # gp.vj.setButton(button_index, 0)
     # gp.a = 0
 
-    gp.b.tap(.5)
+    # gp.b.tap(.5)
 
     # for _ in range(10):
     #     gp(accel=.5, decel=-)
